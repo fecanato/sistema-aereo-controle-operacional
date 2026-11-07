@@ -1565,7 +1565,44 @@
       state.blocks = [...nonSpecial, ...newDgBlocks, ...newPalletBlocks];
     }
 
+    // Sincroniza e insere automaticamente no Controle Operacional qualquer carga COMAIL recebida do Gestão de Pesos
+    // (como COMAIL é malote interno e não tem AWB no DRE, o Controle insere e valida automaticamente no destino correspondente)
+    function syncAutoComailFromPesosApp() {
+      if (!state) return;
+      if (!state.comail) state.comail = {};
+      if (!state.comailPesos) state.comailPesos = {};
+      if (!state._autoComailBlocks) state._autoComailBlocks = {};
+      const appMap = state.pesosAppByBlock || {};
+      if (Object.keys(appMap).length === 0) return;
+
+      for (const [bid, st] of Object.entries(appMap)) {
+        if (!st || String(bid).endsWith('|DG') || String(bid).endsWith('|PALLET')) continue;
+        // Calcula comailVol a partir de st.comailVol ou somando logs de categoria COMAIL
+        let appComVol = Math.max(0, Math.round(Number(st.comailVol || 0)));
+        let appComKg = Math.max(0, Math.round(Number(st.comailKg || 0) * 1000) / 1000);
+        if (appComVol === 0 && Array.isArray(st.logs)) {
+          const comLogs = st.logs.filter(lg => String(lg.cat || lg.tipo || '').toUpperCase() === 'COMAIL');
+          if (comLogs.length > 0) {
+            appComVol = comLogs.reduce((acc, lg) => acc + Math.max(1, Number(lg.vol || 1)), 0);
+            appComKg = Math.round(comLogs.reduce((acc, lg) => acc + Number(lg.kg || 0), 0) * 1000) / 1000;
+            st.comailVol = appComVol;
+            st.comailKg = appComKg;
+          }
+        }
+        if (appComVol > 0) {
+          state.comail[bid] = appComVol;
+          state.comailPesos[bid] = appComKg;
+          state._autoComailBlocks[bid] = true;
+        } else if (state._autoComailBlocks[bid]) {
+          delete state.comail[bid];
+          delete state.comailPesos[bid];
+          delete state._autoComailBlocks[bid];
+        }
+      }
+    }
+
     function recalculateVolumesFromReport(resetWeights = false) {
+      syncAutoComailFromPesosApp();
       if (Array.isArray(state.allReportRows) && state.allReportRows.length > 0) {
         const consMapForRep = new Map(state.cons.map(c => [c.cons, c]));
         const seenAwbs = new Set();
@@ -1670,6 +1707,8 @@
           b.vol = cCount + sCount + comailQty;
           if (b.vol <= 0 || resetWeights) {
             b.peso = 0;
+          } else if (Number(b.peso || 0) <= 0 && state.pesosAppByBlock && state.pesosAppByBlock[b.id] && Number(state.pesosAppByBlock[b.id].totalKg || 0) > 0) {
+            b.peso = Math.round(Number(state.pesosAppByBlock[b.id].totalKg) * 1000) / 1000;
           }
         }
       }
@@ -1746,6 +1785,13 @@
     }
 
     function clearPesosOnly() {
+      if (state._autoComailBlocks) {
+        for (const bid of Object.keys(state._autoComailBlocks)) {
+          if (state.comail) delete state.comail[bid];
+          if (state.comailPesos) delete state.comailPesos[bid];
+        }
+        state._autoComailBlocks = {};
+      }
       state.pesosAppByBlock = {};
       for (const b of state.blocks) {
         b.peso = 0;
@@ -3560,9 +3606,9 @@
                     </div>
                   `).join('')}
                   ${(state.comail && state.comail[b.id]) ? `
-                    <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-900 font-bold text-[11px]">
-                      <span>COMAIL ADICIONADO</span>
-                      <span>+${state.comail[b.id]} vol(s)</span>
+                    <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-teal-100 dark:bg-teal-950/70 text-teal-950 dark:text-teal-200 border border-teal-300/70 dark:border-teal-700/70 font-bold text-[11px]">
+                      <span>✓ COMAIL VALIDADO (S/ AWB)</span>
+                      <span>+${state.comail[b.id]} vol(s)${(state.comailPesos && state.comailPesos[b.id] > 0) ? ` · ${Number(state.comailPesos[b.id]).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} kg` : ''}</span>
                     </div>
                   ` : ''}
                 </div>
@@ -5732,14 +5778,22 @@
       const palletBlockId = baseId + '|PALLET';
       const vol = Math.max(1, Number(p.vol || 1));
       const peso = Math.round(Number(p.peso || 0) * 1000) / 1000;
+      const resolvedTime = String(p.time || getAwbConsTime(cleanAwb) || '').trim();
+      const resolvedMins = (p.mins !== undefined && p.mins !== null) ? p.mins : timeStrToMinutes(resolvedTime);
 
       state.pallets[cleanAwb] = {
         awb: cleanAwb,
         dest: p.dest,
         baseId,
         vol,
-        peso
+        peso,
+        time: resolvedTime,
+        mins: resolvedMins
       };
+      if (resolvedTime) {
+        if (!state.awbTimes) state.awbTimes = {};
+        if (!state.awbTimes[cleanAwb]) state.awbTimes[cleanAwb] = resolvedTime;
+      }
 
       const syntheticCons = 'PALLET_' + cleanAwb.slice(-4);
       const syntheticRow = [
@@ -5753,7 +5807,8 @@
         1.00,
         'BRL',
         1.0000,
-        1.00
+        1.00,
+        resolvedTime
       ];
 
       if (!state.report.some(r => String(r[0]) === cleanAwb)) {
@@ -5772,13 +5827,29 @@
           comailVol: 0, comailKg: 0,
           dgVol: 0, dgKg: 0,
           palletVol: 0, palletKg: 0,
-          totalVol: 0, totalKg: 0
+          totalVol: 0, totalKg: 0,
+          logs: []
         };
+      }
+      if (!Array.isArray(state.pesosAppByBlock[palletBlockId].logs)) {
+        state.pesosAppByBlock[palletBlockId].logs = [];
       }
       state.pesosAppByBlock[palletBlockId].palletVol = (state.pesosAppByBlock[palletBlockId].palletVol || 0) + vol;
       state.pesosAppByBlock[palletBlockId].palletKg = (state.pesosAppByBlock[palletBlockId].palletKg || 0) + peso;
       state.pesosAppByBlock[palletBlockId].totalVol = (state.pesosAppByBlock[palletBlockId].totalVol || 0) + vol;
       state.pesosAppByBlock[palletBlockId].totalKg = (state.pesosAppByBlock[palletBlockId].totalKg || 0) + peso;
+      state.pesosAppByBlock[palletBlockId].logs.push({
+        id: String(p.id || ('PLT_' + cleanAwb)),
+        time: resolvedTime,
+        mins: resolvedMins,
+        vol,
+        kg: peso,
+        cat: 'PALLET',
+        tipo: 'PALLET',
+        awb: cleanAwb,
+        destRaw: p.dest,
+        rawTs: String(p.rawTs || resolvedTime || '')
+      });
 
       recalculateVolumesFromReport(false);
       const palletBlock = state.blocks.find(b => b.id === palletBlockId);
@@ -5892,7 +5963,7 @@
         const unregisteredPallets = [];
         const matchedBridgeIds = new Set();
 
-        const processSingleImportedPallet = (cleanAwb, destRaw, vol, kg) => {
+        const processSingleImportedPallet = (cleanAwb, destRaw, vol, kg, tInfo = null, rawRow = null, metaP = null) => {
           if (!cleanAwb || !destRaw) return;
           const rawMapped = mapGestaoPesosDestToBlockId(destRaw, 'CAIXA');
           const baseId = normalizePalletBaseId(rawMapped);
@@ -5909,13 +5980,28 @@
             }
           }
 
+          let resolvedTime = (tInfo && tInfo.time) ? tInfo.time : '';
+          if (!resolvedTime && metaP) {
+            const mTimeInfo = extractAppPesagemTimeInfo(metaP);
+            if (mTimeInfo.time) resolvedTime = mTimeInfo.time;
+          }
+          if (!resolvedTime) {
+            resolvedTime = getAwbConsTime(cleanAwb) || '';
+          }
+          const resolvedMins = (tInfo && tInfo.mins !== null && tInfo.mins !== undefined)
+            ? tInfo.mins
+            : timeStrToMinutes(resolvedTime);
+          const rawTsStr = String((rawRow && (rawRow.criada_em || rawRow.horario)) || (metaP && (metaP.criada_em || metaP.horario || metaP.updatedAt)) || resolvedTime || '');
+
           if (existsInReport) {
             state.pallets[cleanAwb] = {
               awb: cleanAwb,
               dest: destRaw,
               baseId,
               vol: Math.max(1, vol),
-              peso: kg
+              peso: kg,
+              time: resolvedTime,
+              mins: resolvedMins
             };
             pesoByBlock[palletBlockId] = (pesoByBlock[palletBlockId] || 0) + kg;
             const st = ensureAppStat(palletBlockId);
@@ -5923,16 +6009,32 @@
             st.palletKg += kg;
             st.totalVol += Math.max(1, vol);
             st.totalKg += kg;
+            st.logs.push({
+              id: String((rawRow && rawRow.id) || (metaP && metaP.id) || `PLT_${cleanAwb}_${st.logs.length + 1}`),
+              time: resolvedTime,
+              mins: resolvedMins,
+              vol: Math.max(1, vol),
+              kg: Number(kg || 0),
+              cat: 'PALLET',
+              tipo: 'PALLET',
+              awb: cleanAwb,
+              destRaw,
+              rawTs: rawTsStr
+            });
             palletMovedCount++;
           } else {
             if (!unregisteredPallets.some(u => u.awb === cleanAwb)) {
               unregisteredPallets.push({
+                id: String((rawRow && rawRow.id) || (metaP && metaP.id) || ('PLT_' + cleanAwb)),
                 awb: cleanAwb,
                 dest: destRaw,
                 baseId,
                 palletDestLabel,
                 vol: Math.max(1, vol),
-                peso: kg
+                peso: kg,
+                time: resolvedTime,
+                mins: resolvedMins,
+                rawTs: rawTsStr
               });
             }
           }
@@ -5972,7 +6074,8 @@
 
           if (isPalletRow) {
             const cleanAwb = rawAwbStr.replace(/^PALLET:/i, '').replace(/\D/g, '');
-            processSingleImportedPallet(cleanAwb, destRaw, vol, kg);
+            const tInfo = extractAppPesagemTimeInfo(r);
+            processSingleImportedPallet(cleanAwb, destRaw, vol, kg, tInfo, r, metaP);
           } else if (tipoRaw === 'DG' && r.awb) {
             const cleanAwb = String(r.awb).replace(/\D/g, '');
             if (cleanAwb.length === 12 && !state.dgs.includes(cleanAwb)) {
@@ -6046,7 +6149,8 @@
           const destRaw = String(mObj.dest || mObj.destino || '').trim().toUpperCase();
           const vol = Number(mObj.vol || mObj.volumes || 1);
           const kg = Number(mObj.kg || mObj.peso_kg || 0);
-          processSingleImportedPallet(cleanAwb, destRaw, vol, kg);
+          const tInfo = extractAppPesagemTimeInfo(mObj);
+          processSingleImportedPallet(cleanAwb, destRaw, vol, kg, tInfo, null, mObj);
         }
 
         state.pesosAppByBlock = appStatsByBlock;
@@ -8765,8 +8869,8 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           if (norm) return { time: norm, mins: timeStrToMinutes(norm) };
         }
       }
-      // 2. Campos de timestamp ISO (ex: criada_em do Supabase Gestão de Pesos)
-      const tsCandidates = [r.criada_em, r.created_at, r.data_hora, r.CRIADA_EM, r.DATA_HORA, r['Data/Hora'], r.timestamp];
+      // 2. Campos de timestamp ISO ou Excel (ex: criada_em do Supabase Gestão de Pesos ou REGISTRADO_EM da planilha)
+      const tsCandidates = [r.criada_em, r.created_at, r.created, r.REGISTRADO_EM, r.registrado_em, r.updatedAt, r.atualizada_em, r.data_hora, r.CRIADA_EM, r.DATA_HORA, r['Data/Hora'], r.timestamp];
       for (const ts of tsCandidates) {
         if (!ts) continue;
         const tsStr = String(ts).trim();
@@ -8813,8 +8917,9 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const appMap = state.pesosAppByBlock || {};
       const keys = Object.keys(appMap);
       if (keys.length === 0) return;
-      const alreadyHasLogs = keys.some(k => Array.isArray(appMap[k]?.logs) && appMap[k].logs.length > 0);
-      if (alreadyHasLogs) return;
+      // Verifica se algum bloco com volume sincronizado (inclusive blocos |PALLET ou |DG) está sem logs de horário
+      const needsHydration = keys.some(k => Number(appMap[k]?.totalVol || 0) > 0 && (!Array.isArray(appMap[k]?.logs) || appMap[k].logs.length === 0));
+      if (!needsHydration) return;
       if (pesosChronoState.hydratedOnceForOp === (state.opId || 'DEFAULT')) return;
 
       pesosChronoState.hydratingInFlight = true;
@@ -8832,44 +8937,105 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           }
         }
         if (!targetPesosOpId) return;
-        const pRes = await fetch(`https://hhxcloojniyfrgfpfbgx.supabase.co/rest/v1/pesagens?select=*&operacao_id=eq.${encodeURIComponent(targetPesosOpId)}&order=criada_em.asc`, {
-          headers: { apikey: PESO_SUPABASE_KEY, 'Content-Type': 'application/json' }
-        });
+        const [pRes, bridgeRes] = await Promise.all([
+          fetch(`https://hhxcloojniyfrgfpfbgx.supabase.co/rest/v1/pesagens?select=*&operacao_id=eq.${encodeURIComponent(targetPesosOpId)}&order=criada_em.asc`, {
+            headers: { apikey: PESO_SUPABASE_KEY, 'Content-Type': 'application/json' }
+          }),
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=dados&id=eq.__SYS_PESOS_PALLETS__${encodeURIComponent(targetPesosOpId)}`, {
+            headers: {
+              apikey: MINUTAS_SUPABASE_KEY,
+              Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }).catch(() => null)
+        ]);
         if (!pRes.ok) return;
         const rows = await pRes.json();
         if (!Array.isArray(rows) || rows.length === 0) return;
+
+        let palletBridgeMap = {};
+        try {
+          const localRaw = localStorage.getItem('peso_pallet_meta_' + targetPesosOpId);
+          if (localRaw) palletBridgeMap = { ...palletBridgeMap, ...(JSON.parse(localRaw) || {}) };
+        } catch (e) {}
+        if (bridgeRes && bridgeRes.ok) {
+          try {
+            const bData = await bridgeRes.json();
+            if (Array.isArray(bData) && bData[0] && bData[0].dados) {
+              const cloudMap = bData[0].dados.byId || bData[0].dados.pallets || {};
+              palletBridgeMap = { ...palletBridgeMap, ...cloudMap };
+            }
+          } catch (e) {}
+        }
+
         state.pesosGestaoOpId = targetPesosOpId;
         for (const st of Object.values(appMap)) {
           st.logs = [];
         }
+        const matchedBridgeIds = new Set();
         for (const r of rows) {
-          const destRaw = String(r.destino || '').trim().toUpperCase();
+          let metaP = palletBridgeMap[r.id] || null;
+          if (metaP) {
+            matchedBridgeIds.add(r.id);
+          } else {
+            for (const [mId, mObj] of Object.entries(palletBridgeMap)) {
+              if (matchedBridgeIds.has(mId) || !mObj) continue;
+              const mDest = String(mObj.dest || mObj.destino || '').trim().toUpperCase();
+              const mKg = Number(mObj.kg ?? mObj.peso_kg ?? 0);
+              const mVol = Number(mObj.vol ?? mObj.volumes ?? 1);
+              if (mDest === String(r.destino || '').trim().toUpperCase() && Math.abs(mKg - Number(r.peso_kg || 0)) < 0.01 && mVol === Number(r.volumes || 1)) {
+                metaP = mObj;
+                matchedBridgeIds.add(mId);
+                break;
+              }
+            }
+          }
+
+          const destRaw = String(r.destino || (metaP && (metaP.dest || metaP.destino)) || '').trim().toUpperCase();
           const tipoRaw = String(r.tipo || 'NORMAL').trim().toUpperCase();
           const catRaw = String(r.categoria || (tipoRaw === 'DELIVERY' || tipoRaw === 'COMAIL' || tipoRaw === 'PALLET' ? tipoRaw : 'CAIXA')).trim().toUpperCase();
+          const rawAwbStr = String(r.awb || (metaP && metaP.awb) || '').trim();
+          const cleanAwb = rawAwbStr.replace(/^PALLET:/i, '').replace(/\D/g, '');
           const isDeliv = (tipoRaw === 'DELIVERY' || catRaw === 'DELIVERY');
           const isComail = (tipoRaw === 'COMAIL' || catRaw === 'COMAIL');
           const isSaca = (catRaw === 'SACA' || catRaw === 'SACAS' || destRaw.includes('SACA'));
-          const isPallet = (tipoRaw === 'PALLET' || catRaw === 'PALLET');
+          const isPallet = (
+            tipoRaw === 'PALLET' ||
+            catRaw === 'PALLET' ||
+            rawAwbStr.toUpperCase().startsWith('PALLET:') ||
+            Boolean(metaP) ||
+            Boolean(cleanAwb && state.pallets && state.pallets[cleanAwb])
+          );
           let blockId = mapGestaoPesosDestToBlockId(destRaw, isSaca ? 'SACA' : 'CAIXA');
           if (isPallet) blockId = normalizePalletBaseId(blockId) + '|PALLET';
           else if (tipoRaw === 'DG') blockId = blockId + '|DG';
 
           if (!appMap[blockId]) continue;
           if (!Array.isArray(appMap[blockId].logs)) appMap[blockId].logs = [];
-          const tInfo = extractAppPesagemTimeInfo(r);
+          let tInfo = extractAppPesagemTimeInfo(r);
+          if (!tInfo.time && metaP) tInfo = extractAppPesagemTimeInfo(metaP);
+          if (!tInfo.time && cleanAwb) {
+            const fbTime = getAwbConsTime(cleanAwb);
+            if (fbTime) tInfo = { time: fbTime, mins: timeStrToMinutes(fbTime) };
+          }
+          if (isPallet && cleanAwb && state.pallets && state.pallets[cleanAwb] && tInfo.time) {
+            state.pallets[cleanAwb].time = tInfo.time;
+            state.pallets[cleanAwb].mins = tInfo.mins;
+          }
           appMap[blockId].logs.push({
             id: String(r.id || `HYD_${appMap[blockId].logs.length + 1}`),
             time: tInfo.time,
             mins: tInfo.mins,
-            vol: Number(r.volumes || 1),
-            kg: Number(r.peso_kg || 0),
+            vol: Number(r.volumes || (metaP && metaP.vol) || 1),
+            kg: Number(r.peso_kg || (metaP && metaP.kg) || 0),
             cat: isPallet ? 'PALLET' : (tipoRaw === 'DG' ? 'DG' : (isDeliv ? 'DELIVERY' : (isComail ? 'COMAIL' : (isSaca ? 'SACA' : 'CAIXA')))),
-            tipo: tipoRaw,
-            awb: String(r.awb || '').replace(/\D/g, ''),
+            tipo: isPallet ? 'PALLET' : tipoRaw,
+            awb: cleanAwb,
             destRaw,
-            rawTs: String(r.criada_em || r.horario || '')
+            rawTs: String(r.criada_em || r.horario || (metaP && (metaP.criada_em || metaP.updatedAt)) || '')
           });
         }
+        recalculateVolumesFromReport(false);
         saveCatalogAndState();
         if (activeTab === 'pesos') renderPesosTable();
         if (pesosChronoState.activeBlockId) {
@@ -8975,14 +9141,26 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const appSacaLogs = [];
 
       for (const lg of rawLogs) {
+        let entryTime = lg.time || '';
+        let entryMins = lg.mins !== undefined && lg.mins !== null ? lg.mins : timeStrToMinutes(entryTime);
+        const entryCat = String(lg.cat || 'CAIXA').toUpperCase();
+        const entryAwb = String(lg.awb || '').replace(/\D/g, '');
+        if ((!entryTime || entryTime === 'Sem Horário') && (isPalletBlock || entryCat === 'PALLET')) {
+          const pMeta = entryAwb && state.pallets ? state.pallets[entryAwb] : null;
+          const fallbackT = (pMeta && pMeta.time) || (entryAwb ? getAwbConsTime(entryAwb) : '') || (sysBoxItems[0] && sysBoxItems[0].time !== 'Sem Horário' ? sysBoxItems[0].time : '');
+          if (fallbackT) {
+            entryTime = fallbackT;
+            entryMins = timeStrToMinutes(fallbackT);
+          }
+        }
         const entry = {
           id: lg.id,
-          time: lg.time || 'Sem Horário',
-          mins: lg.mins !== undefined ? lg.mins : timeStrToMinutes(lg.time),
+          time: entryTime || 'Sem Horário',
+          mins: entryMins,
           vol: Number(lg.vol || 1),
           kg: Number(lg.kg || 0),
-          cat: String(lg.cat || 'CAIXA').toUpperCase(),
-          awb: lg.awb || ''
+          cat: entryCat,
+          awb: entryAwb
         };
         if (entry.cat === 'SACA' && !isDgBlock && !isPalletBlock) {
           appSacaLogs.push(entry);
@@ -8991,10 +9169,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         }
       }
 
-      // Caso state.pesosAppByBlock tenha contagens mas sem logs individuais com horário (ex: planilha resumo sem coluna hora),
-      // cria entrada sintética "Sem Horário" para deixar claro na tela
-      const totalSysBoxVol = sysBoxItems.reduce((acc, x) => acc + x.vol, 0);
-      const totalSysBoxKg = Math.round(sysBoxItems.reduce((acc, x) => acc + x.wt, 0) * 100) / 100;
       const expectedAppBoxVol = appSt
         ? (isPalletBlock ? Number(appSt.palletVol || 0) : (isDgBlock ? Number(appSt.dgVol || 0) : (Number(appSt.caixasVol || 0) + Number(appSt.deliveryVol || 0) + Number(appSt.comailVol || 0))))
         : 0;
@@ -9002,18 +9176,102 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         ? (isPalletBlock ? Number(appSt.palletKg || 0) : (isDgBlock ? Number(appSt.dgKg || 0) : (Number(appSt.caixasKg || 0) + Number(appSt.deliveryKg || 0) + Number(appSt.comailKg || 0))))
         : 0;
 
+      // Se um bloco PALLET (ou DG) já tinha sido sincronizado antes sem que o log individual tivesse sido gravado em appSt.logs,
+      // reconstrói o log do Pallet/DG com o horário e AWB reais para sincronizar perfeitamente!
       if (appSt && appBoxLogs.length === 0 && expectedAppBoxVol > 0) {
-        appBoxLogs.push({
-          id: 'SYNTH_BOX_' + blockId,
-          time: 'Sem Horário',
-          mins: null,
-          vol: expectedAppBoxVol,
-          kg: Math.round(expectedAppBoxKg * 100) / 100,
-          cat: isPalletBlock ? 'PALLET' : (isDgBlock ? 'DG' : 'CAIXA'),
-          awb: '',
-          isSyntheticSummary: true
+        if ((isPalletBlock || isDgBlock) && sysBoxItems.length > 0) {
+          for (const sItem of sysBoxItems) {
+            const pObj = (isPalletBlock && state.pallets && state.pallets[sItem.awb]) ? state.pallets[sItem.awb] : null;
+            const pTime = (pObj && pObj.time) || (sItem.time !== 'Sem Horário' ? sItem.time : '');
+            const pMins = pTime ? timeStrToMinutes(pTime) : null;
+            const pKg = (pObj && Number(pObj.peso) > 0) ? Number(pObj.peso) : (sysBoxItems.length === 1 ? expectedAppBoxKg : sItem.wt);
+            appBoxLogs.push({
+              id: 'AUTO_SPEC_' + sItem.awb,
+              time: pTime || 'Sem Horário',
+              mins: pMins,
+              vol: sItem.vol,
+              kg: Math.round(pKg * 100) / 100,
+              cat: isPalletBlock ? 'PALLET' : 'DG',
+              awb: sItem.awb
+            });
+          }
+          if (!Array.isArray(appSt.logs) || appSt.logs.length === 0) {
+            appSt.logs = [...appBoxLogs];
+          }
+        } else {
+          appBoxLogs.push({
+            id: 'SYNTH_BOX_' + blockId,
+            time: 'Sem Horário',
+            mins: null,
+            vol: expectedAppBoxVol,
+            kg: Math.round(expectedAppBoxKg * 100) / 100,
+            cat: isPalletBlock ? 'PALLET' : (isDgBlock ? 'DG' : 'CAIXA'),
+            awb: '',
+            isSyntheticSummary: true
+          });
+        }
+      }
+
+      // Regra COMAIL: Como COMAIL é malote interno e não tem AWB (não passa pelo coletor DRE),
+      // ao receber COMAIL do Gestão de Pesos, o Controle Operacional insere e valida automaticamente essa carga no bloco!
+      if (!isDgBlock && !isPalletBlock) {
+        const comailAppLogs = appBoxLogs.filter(e => e.cat === 'COMAIL');
+        if (comailAppLogs.length > 0) {
+          for (const cLog of comailAppLogs) {
+            sysBoxItems.push({
+              awb: 'COMAIL',
+              isAutoComail: true,
+              cons: 'COMAIL INTERNO',
+              lacre: '',
+              recip: 'COMAIL (Malote Interno · Sem AWB)',
+              city: expDest,
+              wt: Number(cLog.kg || 0),
+              destLoc: expDest,
+              val: 0,
+              curr: 'BRL',
+              brl: 0,
+              time: cLog.time || 'Sem Horário',
+              mins: cLog.mins,
+              vol: Number(cLog.vol || 1),
+              catLabel: 'COMAIL'
+            });
+          }
+        } else if (state.comail && Number(state.comail[blockId] || 0) > 0) {
+          const comVol = Number(state.comail[blockId]);
+          const comKg = (state.comailPesos && Number(state.comailPesos[blockId]) > 0)
+            ? Number(state.comailPesos[blockId])
+            : (appSt && Number(appSt.comailKg) > 0 ? Number(appSt.comailKg) : 0);
+          sysBoxItems.push({
+            awb: 'COMAIL',
+            isAutoComail: true,
+            cons: 'COMAIL INTERNO',
+            lacre: '',
+            recip: 'COMAIL (Malote Interno · Sem AWB)',
+            city: expDest,
+            wt: comKg,
+            destLoc: expDest,
+            val: 0,
+            curr: 'BRL',
+            brl: 0,
+            time: 'Validado Auto',
+            mins: null,
+            vol: comVol,
+            catLabel: 'COMAIL'
+          });
+        }
+
+        // Reordena sysBoxItems após injetar os itens de COMAIL validados
+        sysBoxItems.sort((a, bItem) => {
+          if (a.mins === null && bItem.mins === null) return String(a.awb).localeCompare(String(bItem.awb));
+          if (a.mins === null) return 1;
+          if (bItem.mins === null) return -1;
+          if (a.mins !== bItem.mins) return a.mins - bItem.mins;
+          return String(a.awb).localeCompare(String(bItem.awb));
         });
       }
+
+      const totalSysBoxVol = sysBoxItems.reduce((acc, x) => acc + x.vol, 0);
+      const totalSysBoxKg = Math.round(sysBoxItems.reduce((acc, x) => acc + x.wt, 0) * 100) / 100;
 
       appBoxLogs.sort((a, bLog) => {
         if (a.mins === null && bLog.mins === null) return 0;
@@ -9089,7 +9347,9 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             sysKg: sg.kg,
             appKg: exactApp.kg,
             status: 'EXACT_MATCH',
-            statusLabel: '✓ Conciliado Exato',
+            statusLabel: sg.items.every(x => x.isAutoComail)
+              ? '✓ Comail Validado Automaticamente'
+              : (sg.items.some(x => x.isAutoComail) ? '✓ Conciliado Exato (c/ Comail)' : '✓ Conciliado Exato'),
             isDivergent: false
           });
         }
@@ -9551,10 +9811,32 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     }
 
     // Tooltip rico ao passar o mouse sobre um volume na coluna Sistema do comparativo de horários
-    function showChronoAwbTooltip(ev, awb) {
+    function showChronoAwbTooltip(ev, awb, comailTime = '', comailKg = 0, comailVol = 1) {
       const tip = document.getElementById('chronoAwbFloatingTooltip');
       if (!tip) return;
       const cleanAwb = String(awb || '').trim();
+      if (cleanAwb === 'COMAIL') {
+        tip.innerHTML = `
+          <div class="flex items-center justify-between border-b border-white/15 pb-2 mb-2">
+            <div>
+              <div class="text-[10px] uppercase tracking-wider text-teal-300 font-bold">Carga Interna Validada Automaticamente</div>
+              <div class="font-mono font-extrabold text-sm text-white">COMAIL · Sem AWB</div>
+            </div>
+            <div class="text-right">
+              <span class="px-2 py-0.5 rounded-lg bg-teal-600 text-white font-mono font-extrabold text-xs">🕒 ${comailTime || '—'}</span>
+            </div>
+          </div>
+          <div class="space-y-1.5 text-[11px]">
+            <div><span class="text-slate-400">Volumes / Peso:</span> <b class="font-mono text-emerald-300">${comailVol} vol · ${Number(comailKg || 0).toFixed(2)} kg</b></div>
+            <div class="text-slate-300 leading-relaxed">
+              O <b>COMAIL</b> não possui AWB e não passa pelo coletor DRE. Ao ser pesado no <b>Gestão de Pesos</b>, o Controle Operacional insere e valida automaticamente a carga no destino!
+            </div>
+          </div>
+        `;
+        tip.classList.remove('hidden');
+        moveChronoAwbTooltip(ev);
+        return;
+      }
       const r = (state.report || []).find(x => String(x[0]) === cleanAwb);
       if (!r) return;
       const cons = String(r[1] || '');
@@ -9754,7 +10036,26 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
           // Coluna Esquerda: SISTEMA (cada AWB individual como "1 vol / HH:MM", com hover rico mostrando AWB e detalhes)
           const sysCardsHtml = sl.sysItems.length > 0
-            ? sl.sysItems.map(item => `
+            ? sl.sysItems.map(item => item.isAutoComail ? `
+                <div onmouseenter="showChronoAwbTooltip(event, 'COMAIL', '${item.time}', ${item.wt}, ${item.vol})"
+                     onmousemove="moveChronoAwbTooltip(event)"
+                     onmouseleave="hideChronoAwbTooltip()"
+                     onclick="showToast('✓ Carga COMAIL inserida e validada automaticamente no destino (não possui AWB).');"
+                     class="group relative p-2.5 rounded-xl border border-teal-300 dark:border-teal-700/80 bg-teal-50/70 dark:bg-teal-950/30 transition cursor-pointer flex items-center justify-between gap-2">
+                  <div>
+                    <div class="font-extrabold text-sm text-teal-950 dark:text-teal-200 leading-tight">${item.vol} vol</div>
+                    <div class="font-mono font-bold text-xs text-teal-700 dark:text-teal-300">${item.time}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="font-mono font-bold text-[11px] text-teal-800 dark:text-teal-200">
+                      ✓ COMAIL <span class="text-[10px] font-normal text-teal-600 dark:text-teal-400">(Sem AWB · Auto)</span>
+                    </div>
+                    <div class="text-[10px] font-mono text-teal-700 dark:text-teal-300 font-semibold">
+                      ${item.wt.toFixed(1)} kg · VALIDADO
+                    </div>
+                  </div>
+                </div>
+              ` : `
                 <div onmouseenter="showChronoAwbTooltip(event, '${item.awb}')"
                      onmousemove="moveChronoAwbTooltip(event)"
                      onmouseleave="hideChronoAwbTooltip()"
@@ -10623,6 +10924,19 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             st.dgKg += kg;
             st.totalVol += 1;
             st.totalKg += kg;
+            const tInfoDg = extractAppPesagemTimeInfo(r);
+            st.logs.push({
+              id: `MAN_DG_${cleanAwb}_${st.logs.length + 1}`,
+              time: tInfoDg.time || getAwbConsTime(cleanAwb) || '',
+              mins: tInfoDg.mins !== null ? tInfoDg.mins : timeStrToMinutes(getAwbConsTime(cleanAwb)),
+              vol: 1,
+              kg: Number(kg || 0),
+              cat: 'DG',
+              tipo: 'DG',
+              awb: cleanAwb,
+              destRaw,
+              rawTs: String(r.REGISTRADO_EM || r.HORARIO || '')
+            });
           }
         }
 
@@ -10640,6 +10954,9 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             const baseId = normalizePalletBaseId(mapGestaoPesosDestToBlockId(destRaw, 'CAIXA'));
             const palletBlockId = baseId + '|PALLET';
             const palletDestLabel = getPalletBlockDestLabel(baseId, destRaw);
+            const tInfoP = extractAppPesagemTimeInfo(r);
+            const resolvedTime = tInfoP.time || getAwbConsTime(cleanAwb) || '';
+            const resolvedMins = tInfoP.mins !== null ? tInfoP.mins : timeStrToMinutes(resolvedTime);
             let existsInSystem = cleanAwb.length === 12 && state.report.some(row => String(row[0]) === cleanAwb);
             if (!existsInSystem && cleanAwb.length === 12 && Array.isArray(state.allReportRows)) {
               const foundInAll = state.allReportRows.find(row => String(row[0]) === cleanAwb);
@@ -10649,16 +10966,28 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               }
             }
             if (existsInSystem) {
-              state.pallets[cleanAwb] = { awb: cleanAwb, dest: destRaw, baseId, vol, peso: kg };
+              state.pallets[cleanAwb] = { awb: cleanAwb, dest: destRaw, baseId, vol, peso: kg, time: resolvedTime, mins: resolvedMins };
               pesoByBlock[palletBlockId] = (pesoByBlock[palletBlockId] || 0) + kg;
               const st = ensureAppStat(palletBlockId);
               st.palletVol = (st.palletVol || 0) + vol;
               st.palletKg = (st.palletKg || 0) + kg;
               st.totalVol += vol;
               st.totalKg += kg;
+              st.logs.push({
+                id: `MAN_PLT_${cleanAwb}_${st.logs.length + 1}`,
+                time: resolvedTime,
+                mins: resolvedMins,
+                vol,
+                kg: Number(kg || 0),
+                cat: 'PALLET',
+                tipo: 'PALLET',
+                awb: cleanAwb,
+                destRaw,
+                rawTs: String(r.REGISTRADO_EM || r.HORARIO || resolvedTime || '')
+              });
               palletMovedCount++;
             } else {
-              unregisteredPallets.push({ awb: cleanAwb, dest: destRaw, baseId, palletDestLabel, vol, peso: kg });
+              unregisteredPallets.push({ awb: cleanAwb, dest: destRaw, baseId, palletDestLabel, vol, peso: kg, time: resolvedTime, mins: resolvedMins });
             }
           }
         }
