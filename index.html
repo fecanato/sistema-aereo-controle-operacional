@@ -79,6 +79,22 @@
         </div>
       </div>
 
+      <!-- Centro do Cabeçalho: Logo FedEx Linehaul -->
+      <div class="hidden md:flex flex-1 items-center justify-center select-none pointer-events-none px-2">
+        <div class="inline-flex items-center gap-2.5 px-3.5 py-1 rounded-xl bg-slate-50/80 dark:bg-slate-900/50 border border-slate-200/70 dark:border-slate-700/70 shadow-2xs">
+          <div class="flex items-baseline tracking-tighter leading-none font-black text-xl" style="font-family: 'Inter', 'Arial Black', sans-serif;">
+            <span class="text-[#4D148C] dark:text-[#a855f7]">Fed</span><span class="text-[#FF6200]" style="margin-left:-0.5px;">Ex</span>
+          </div>
+          <span class="h-4 w-[1.5px] bg-slate-300 dark:bg-slate-600 rounded-full"></span>
+          <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-[#FF6200] shrink-0" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+            </svg>
+            <span class="text-[11px] font-extrabold uppercase tracking-[0.22em] text-slate-700 dark:text-slate-200">Linehaul</span>
+          </div>
+        </div>
+      </div>
+
       <!-- Right Action Bar Padronizada (Todos exatamente na mesma altura h-8 do badge da Operação) -->
       <div class="flex items-center gap-2 shrink-0">
         <div id="supabaseBadge" class="hidden sm:inline-flex h-8 items-center gap-1.5 text-[11px] font-bold px-2.5 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20 whitespace-nowrap">
@@ -224,12 +240,24 @@
           <span id="kpiAirAwbsStatus" class="text-xs font-semibold text-indigo-600 dark:text-indigo-400">Sincronizado</span>
         </div>
       </div>
-      <div class="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-xs border border-slate-200/80 dark:border-slate-800">
-        <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Recusas / DG / Fora</div>
-        <div class="mt-1.5 flex items-center gap-1.5 text-xs font-bold">
-          <span class="px-2 py-0.5 rounded-md bg-yellow-200 text-yellow-900" id="kpiRecusasBadge">Rec: 0</span>
-          <span class="px-2 py-0.5 rounded-md bg-red-600 text-white" id="kpiDgBadge">DG: 0</span>
-          <span class="px-2 py-0.5 rounded-md bg-neutral-300 text-neutral-900" id="kpiForaBadge">Fora: 0</span>
+      <div class="bg-white dark:bg-slate-900 rounded-2xl p-3.5 shadow-xs border border-slate-200/80 dark:border-slate-800 flex flex-col justify-between">
+        <div class="flex items-center justify-between gap-1">
+          <span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">Ocorrências &amp; Especiais</span>
+          <span class="text-[9px] font-semibold text-purple-600 dark:text-purple-400">Clique p/ listar</span>
+        </div>
+        <div class="mt-1.5 space-y-1.5">
+          <!-- Linha de cima: Rec - Fora - Delivery -->
+          <div class="grid grid-cols-3 gap-1 text-[11px] font-bold">
+            <button type="button" onclick="openKpiSpecialCategoryModal('REC')" class="px-1.5 py-0.5 rounded-md bg-yellow-200 hover:bg-yellow-300 text-yellow-950 transition text-center truncate cursor-pointer shadow-2xs" id="kpiRecusasBadge" title="Clique para listar as AWBs Recusadas">Rec: 0</button>
+            <button type="button" onclick="openKpiSpecialCategoryModal('FORA')" class="px-1.5 py-0.5 rounded-md bg-neutral-300 hover:bg-neutral-400 text-neutral-900 transition text-center truncate cursor-pointer shadow-2xs" id="kpiForaBadge" title="Clique para listar as AWBs Fora do Voo">Fora: 0</button>
+            <button type="button" onclick="openKpiSpecialCategoryModal('DELIVERY')" class="px-1.5 py-0.5 rounded-md bg-amber-500 hover:bg-amber-400 text-slate-950 transition text-center truncate cursor-pointer shadow-2xs" id="kpiDeliveryBadge" title="Clique para listar as AWBs / Destinos de Delivery">Delivery: 0</button>
+          </div>
+          <!-- Linha de baixo: DG - Pallet - Comail -->
+          <div class="grid grid-cols-3 gap-1 text-[11px] font-bold">
+            <button type="button" onclick="openKpiSpecialCategoryModal('DG')" class="px-1.5 py-0.5 rounded-md bg-red-600 hover:bg-red-500 text-white transition text-center truncate cursor-pointer shadow-2xs" id="kpiDgBadge" title="Clique para listar as AWBs DG ativas">DG: 0</button>
+            <button type="button" onclick="openKpiSpecialCategoryModal('PALLET')" class="px-1.5 py-0.5 rounded-md bg-indigo-600 hover:bg-indigo-500 text-white transition text-center truncate cursor-pointer shadow-2xs" id="kpiPalletBadge" title="Clique para listar os Pallets ativos">Pallet: 0</button>
+            <button type="button" onclick="openKpiSpecialCategoryModal('COMAIL')" class="px-1.5 py-0.5 rounded-md bg-teal-600 hover:bg-teal-500 text-white transition text-center truncate cursor-pointer shadow-2xs" id="kpiComailBadge" title="Clique para listar os Comails da operação">Comail: 0</button>
+          </div>
         </div>
       </div>
     </section>
@@ -648,8 +676,11 @@
           <p class="text-xs text-slate-500 dark:text-slate-400">Clique em qualquer <b>Destino</b> na tabela para abrir o comparativo de horários <b>Sistema vs. App</b> (com inspeção de AWB no mouse) ou filtre clicando nos títulos das colunas.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
+          <button type="button" onclick="openManualCrossReconciliationModal()" class="btn-web px-3 py-2 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs inline-flex items-center gap-1.5">
+            <span>⇄ Cruzamento Manual</span>
+          </button>
           <button type="button" onclick="openGlobalCrossDestinationModal()" class="btn-web px-3.5 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-xs inline-flex items-center gap-2">
-            <span>🕒 Diagnóstico &amp; Cruzamento entre Destinos</span>
+            <span>🔗 Diagnóstico &amp; Cruzamento entre Destinos</span>
             <span id="pesosCrossDestHeaderBadge" class="hidden px-2 py-0.5 rounded-full bg-amber-400 text-slate-950 font-extrabold text-[10px]">0</span>
           </button>
         </div>
@@ -1901,9 +1932,331 @@
       document.getElementById('kpiDgBadge').textContent = `DG: ${activeDgsForKpi.length}`;
       document.getElementById('kpiForaBadge').textContent = `Fora: ${state.foraDoVoo.length}`;
 
+      const delivConsSetKpi = new Set((state.cons || []).filter(c => c.source === 'DELIVERY').map(c => c.cons));
+      let activeDeliveryCountKpi = 0;
+      for (const r of (state.report || [])) {
+        const awb = String(r[0] || '');
+        const cons = String(r[1] || '');
+        if (!awb || state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) continue;
+        if (delivConsSetKpi.has(cons)) activeDeliveryCountKpi++;
+      }
+      if (activeDeliveryCountKpi === 0 && (state.report || []).length === 0 && delivConsSetKpi.size > 0) {
+        activeDeliveryCountKpi = delivConsSetKpi.size;
+      }
+      const delivBadgeEl = document.getElementById('kpiDeliveryBadge');
+      if (delivBadgeEl) delivBadgeEl.textContent = `Delivery: ${activeDeliveryCountKpi}`;
+
+      const activePalletsListKpi = Object.values(state.pallets || {}).filter(p => p && p.awb && !state.recusas.includes(String(p.awb)) && !state.foraDoVoo.includes(String(p.awb)));
+      const activePalletVolKpi = activePalletsListKpi.reduce((acc, p) => acc + Math.max(1, Number(p.vol || 1)), 0);
+      const palletBadgeEl = document.getElementById('kpiPalletBadge');
+      if (palletBadgeEl) palletBadgeEl.textContent = `Pallet: ${activePalletVolKpi}`;
+
+      const activeComailVolKpi = Object.values(state.comail || {}).reduce((acc, v) => acc + Number(v || 0), 0);
+      const comailBadgeEl = document.getElementById('kpiComailBadge');
+      if (comailBadgeEl) comailBadgeEl.textContent = `Comail: ${activeComailVolKpi}`;
+
       document.getElementById('badgeMainCount').textContent = state.blocks.filter(b => b.vol > 0 || b.peso > 0).length;
       document.getElementById('badgeReportCount').textContent = state.report.length;
       updatePendenciasBadgesAndBanners();
+    }
+
+    function openKpiSpecialCategoryModal(category) {
+      const cat = String(category || '').toUpperCase();
+      const consMap = new Map((state.cons || []).map(c => [c.cons, c]));
+      const reportByAwb = new Map((state.report || []).map(r => [String(r[0]), r]));
+
+      const resolveDestDisplayForAwb = (awb, fallbackCons = '', fallbackDest = '') => {
+        const r = reportByAwb.get(String(awb));
+        const consStr = r ? String(r[1] || '') : String(fallbackCons || '');
+        const cObj = consMap.get(consStr);
+        if (state.pallets && state.pallets[awb]) {
+          const bId = normalizePalletBaseId(state.pallets[awb].baseId || (cObj ? getCurrentBlockForCons(cObj) : fallbackDest));
+          const blk = (state.blocks || []).find(b => b.id === bId + '|PALLET' || b.id === bId);
+          return blk ? exportDestNameForMinutaWeb(blk.id, blk.dest) : getPalletBlockDestLabel(bId, fallbackDest || bId);
+        }
+        const blockId = getCurrentBlockForAwb(awb, consStr);
+        const blk = (state.blocks || []).find(b => b.id === blockId);
+        if (blk) return exportDestNameForMinutaWeb(blk.id, blk.dest);
+        if (cObj && cObj.dest) return cObj.dest;
+        if (r && r[6]) return String(r[6]);
+        return fallbackDest || '—';
+      };
+
+      let title = '';
+      let rowsHtml = '';
+      let countLabel = '';
+
+      if (cat === 'REC' || cat === 'FORA') {
+        const list = cat === 'REC' ? (state.recusas || []) : (state.foraDoVoo || []);
+        title = cat === 'REC' ? `AWBs Recusadas (${list.length})` : `AWBs Fora do Voo (${list.length})`;
+        countLabel = `${list.length} AWB(s)`;
+        if (list.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhuma AWB em ${cat === 'REC' ? 'Recusas' : 'Fora do Voo'} nesta operação.</div>`;
+        } else {
+          rowsHtml = `
+            <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[10px] sticky top-0">
+                  <tr>
+                    <th class="py-2 px-3">AWB</th>
+                    <th class="py-2 px-3">Destino</th>
+                    <th class="py-2 px-3">CONS</th>
+                    <th class="py-2 px-3 text-right">Peso</th>
+                    <th class="py-2 px-3">Cidade / Destinatário</th>
+                    <th class="py-2 px-3 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  ${list.map(awb => {
+                    const r = reportByAwb.get(String(awb));
+                    const dest = resolveDestDisplayForAwb(awb);
+                    const cons = r ? String(r[1] || '—') : '—';
+                    const wt = r ? Number(r[5] || 0).toFixed(1) + ' kg' : '—';
+                    const city = r ? `${r[4] || '—'} · ${r[3] || ''}` : 'Não consta no Report';
+                    const wasDg = (state.dgs || []).includes(String(awb));
+                    return `
+                      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td class="py-2 px-3 font-mono font-bold text-purple-700 dark:text-purple-300">
+                          ${awb}
+                          ${wasDg ? '<span class="ml-1 px-1.5 py-0.5 rounded bg-red-500/15 text-red-600 dark:text-red-400 text-[9px] font-extrabold">Era DG</span>' : ''}
+                        </td>
+                        <td class="py-2 px-3 font-extrabold text-slate-800 dark:text-slate-100">${dest}</td>
+                        <td class="py-2 px-3 font-mono text-slate-600 dark:text-slate-400">${cons}</td>
+                        <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
+                        <td class="py-2 px-3 truncate max-w-[180px] text-slate-500 dark:text-slate-400">${city}</td>
+                        <td class="py-2 px-3 text-right whitespace-nowrap">
+                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100">
+                            Ver no Report
+                          </button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      } else if (cat === 'DELIVERY') {
+        const delivConsList = (state.cons || []).filter(c => c.source === 'DELIVERY');
+        const delivConsSet = new Set(delivConsList.map(c => c.cons));
+        const delivAwbs = (state.report || []).filter(r => {
+          const awb = String(r[0] || '');
+          const cons = String(r[1] || '');
+          if (!awb || state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) return false;
+          return delivConsSet.has(cons);
+        });
+        title = `Cargas Delivery — AWBs / Destino (${delivAwbs.length} AWB(s) · ${delivConsList.length} CONS)`;
+        if (delivAwbs.length === 0 && delivConsList.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhuma CONS ou AWB de Delivery ativa nesta operação.</div>`;
+        } else if (delivAwbs.length === 0) {
+          rowsHtml = `
+            <div class="space-y-2">
+              <div class="text-xs text-amber-700 dark:text-amber-300 font-semibold">CONS Delivery importadas (aguardando Report para detalhar AWBs):</div>
+              <div class="max-h-80 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl divide-y divide-slate-100 dark:divide-slate-800">
+                ${delivConsList.map(c => `
+                  <div class="p-2.5 flex items-center justify-between text-xs">
+                    <span class="font-mono font-bold text-purple-700 dark:text-purple-300">CONS ${c.cons}</span>
+                    <span class="font-extrabold text-slate-800 dark:text-slate-100">Destino: ${c.dest}</span>
+                    <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[10px]">DELIVERY</span>
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        } else {
+          rowsHtml = `
+            <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[10px] sticky top-0">
+                  <tr>
+                    <th class="py-2 px-3">AWB</th>
+                    <th class="py-2 px-3">Destino</th>
+                    <th class="py-2 px-3">CONS Delivery</th>
+                    <th class="py-2 px-3 text-center">Horário</th>
+                    <th class="py-2 px-3 text-right">Peso</th>
+                    <th class="py-2 px-3 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  ${delivAwbs.map(r => {
+                    const awb = String(r[0]);
+                    const cons = String(r[1]);
+                    const dest = resolveDestDisplayForAwb(awb, cons, r[6]);
+                    const time = getAwbConsTime(r) || '—';
+                    const wt = Number(r[5] || 0).toFixed(1) + ' kg';
+                    return `
+                      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td class="py-2 px-3 font-mono font-bold text-purple-700 dark:text-purple-300">${awb}</td>
+                        <td class="py-2 px-3 font-extrabold text-slate-800 dark:text-slate-100">${dest}</td>
+                        <td class="py-2 px-3 font-mono text-amber-700 dark:text-amber-400 font-semibold">${cons}</td>
+                        <td class="py-2 px-3 text-center font-mono">${time}</td>
+                        <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
+                        <td class="py-2 px-3 text-right">
+                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                            Ver no Report
+                          </button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      } else if (cat === 'DG') {
+        const activeDgs = (state.dgs || []).filter(a => isAwbActiveDg(a));
+        title = `Cargas DG (Mercadoria Perigosa) Ativas (${activeDgs.length})`;
+        if (activeDgs.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhuma AWB DG ativa no momento.</div>`;
+        } else {
+          rowsHtml = `
+            <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[10px] sticky top-0">
+                  <tr>
+                    <th class="py-2 px-3">AWB</th>
+                    <th class="py-2 px-3">Destino (Bloco DG)</th>
+                    <th class="py-2 px-3">CONS</th>
+                    <th class="py-2 px-3 text-center">Horário</th>
+                    <th class="py-2 px-3 text-right">Peso DRE</th>
+                    <th class="py-2 px-3 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  ${activeDgs.map(awb => {
+                    const r = reportByAwb.get(String(awb));
+                    const dest = resolveDestDisplayForAwb(awb);
+                    const cons = r ? String(r[1] || '—') : '—';
+                    const time = r ? (getAwbConsTime(r) || '—') : '—';
+                    const wt = r ? Number(r[5] || 0).toFixed(1) + ' kg' : '—';
+                    return `
+                      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td class="py-2 px-3 font-mono font-bold text-red-600 dark:text-red-400">${awb}</td>
+                        <td class="py-2 px-3 font-extrabold text-slate-800 dark:text-slate-100">${dest}</td>
+                        <td class="py-2 px-3 font-mono text-slate-600 dark:text-slate-400">${cons}</td>
+                        <td class="py-2 px-3 text-center font-mono">${time}</td>
+                        <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
+                        <td class="py-2 px-3 text-right">
+                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                            Ver no Report
+                          </button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      } else if (cat === 'PALLET') {
+        const pallets = Object.values(state.pallets || {}).filter(p => p && p.awb && !state.recusas.includes(String(p.awb)) && !state.foraDoVoo.includes(String(p.awb)));
+        title = `Pallets Ativos na Operação (${pallets.length})`;
+        if (pallets.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhum Pallet ativo registrado nesta operação.</div>`;
+        } else {
+          rowsHtml = `
+            <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[10px] sticky top-0">
+                  <tr>
+                    <th class="py-2 px-3">AWB</th>
+                    <th class="py-2 px-3">Destino (Bloco Pallet)</th>
+                    <th class="py-2 px-3 text-center">Volumes</th>
+                    <th class="py-2 px-3 text-right">Peso</th>
+                    <th class="py-2 px-3 text-center">Horário</th>
+                    <th class="py-2 px-3 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  ${pallets.map(p => {
+                    const awb = String(p.awb);
+                    const r = reportByAwb.get(awb);
+                    const dest = resolveDestDisplayForAwb(awb, r ? r[1] : '', p.dest || p.baseId);
+                    const vol = Math.max(1, Number(p.vol || 1));
+                    const peso = Number(p.peso || (r ? r[5] : 0) || 0).toFixed(2) + ' kg';
+                    const time = p.time || (r ? getAwbConsTime(r) : '') || '—';
+                    return `
+                      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td class="py-2 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400">${awb}</td>
+                        <td class="py-2 px-3 font-extrabold text-slate-800 dark:text-slate-100">${dest}</td>
+                        <td class="py-2 px-3 text-center font-mono font-bold">${vol} vol</td>
+                        <td class="py-2 px-3 text-right font-mono font-semibold">${peso}</td>
+                        <td class="py-2 px-3 text-center font-mono">${time}</td>
+                        <td class="py-2 px-3 text-right">
+                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                            Ver no Report
+                          </button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      } else if (cat === 'COMAIL') {
+        const comailEntries = Object.entries(state.comail || {}).filter(([, v]) => Number(v || 0) > 0);
+        title = `Cargas Comail por Destino (${comailEntries.length} destino(s))`;
+        if (comailEntries.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhum Comail lançado nesta operação.</div>`;
+        } else {
+          rowsHtml = `
+            <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
+              <table class="w-full text-xs text-left">
+                <thead class="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 uppercase text-[10px] sticky top-0">
+                  <tr>
+                    <th class="py-2 px-3">Identificação</th>
+                    <th class="py-2 px-3">Destino</th>
+                    <th class="py-2 px-3">CIA / Origem</th>
+                    <th class="py-2 px-3 text-center">Volumes</th>
+                    <th class="py-2 px-3 text-right">Peso</th>
+                    <th class="py-2 px-3 text-center">Horário</th>
+                    <th class="py-2 px-3 text-right">Ação</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                  ${comailEntries.map(([bid, volVal]) => {
+                    const blk = (state.blocks || []).find(b => b.id === bid) || { id: bid, dest: bid, orig: 'GRU', cia: 'LATAM' };
+                    const expDest = exportDestNameForMinutaWeb(blk.id, blk.dest);
+                    const appSt = state.pesosAppByBlock && state.pesosAppByBlock[bid];
+                    const comKg = (state.comailPesos && Number(state.comailPesos[bid]) > 0)
+                      ? Number(state.comailPesos[bid])
+                      : (appSt && Number(appSt.comailKg) > 0 ? Number(appSt.comailKg) : 0);
+                    const comLog = appSt && Array.isArray(appSt.logs) ? appSt.logs.find(l => String(l.cat || '').toUpperCase() === 'COMAIL') : null;
+                    const timeStr = (comLog && comLog.time) ? comLog.time : 'Validado Auto';
+                    return `
+                      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                        <td class="py-2 px-3 font-mono font-bold text-teal-600 dark:text-teal-400">COMAIL (Sem AWB)</td>
+                        <td class="py-2 px-3 font-extrabold text-slate-800 dark:text-slate-100">${expDest}</td>
+                        <td class="py-2 px-3 font-semibold text-slate-600 dark:text-slate-300">${blk.orig} · ${blk.cia}</td>
+                        <td class="py-2 px-3 text-center font-mono font-bold">${volVal} vol</td>
+                        <td class="py-2 px-3 text-right font-mono font-semibold">${comKg > 0 ? comKg.toFixed(2) + ' kg' : '—'}</td>
+                        <td class="py-2 px-3 text-center font-mono">${timeStr}</td>
+                        <td class="py-2 px-3 text-right">
+                          <button type="button" onclick="closeModal(); switchTab('pesos'); openPesosChronologyModal('${bid}');" class="px-2 py-1 rounded bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold text-[10px]">
+                            Abrir Destino
+                          </button>
+                        </td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            </div>
+          `;
+        }
+      }
+
+      openModal(
+        title,
+        rowsHtml,
+        `<button type="button" onclick="closeModal()" class="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">Fechar</button>`,
+        'max-w-3xl'
+      );
     }
 
     function renderCockpit() {
@@ -4309,16 +4662,7 @@
 
     function applyPesosQuickStatusFilter(mode) {
       pesosTableFilterState.quickMode = mode;
-      // Se escolheu atalho rápido, limpa o filtro manual específico da coluna status para não conflitar
-      if (mode === 'ALL') {
-        pesosTableFilterState.selectedValues.status = null;
-      } else {
-        const allRows = buildPesosRowModels();
-        const matchingStatuses = allRows
-          .filter(r => mode === 'CONCILIADOS' ? r.isConciliado : !r.isConciliado)
-          .map(r => r.colValues.status);
-        pesosTableFilterState.selectedValues.status = new Set(matchingStatuses);
-      }
+      pesosTableFilterState.selectedValues.status = null;
       renderPesosTable();
       if (pesosTableFilterState.activePopoverCol === 'status') {
         renderPesosColFilterPopoverContent('status');
@@ -4717,6 +5061,23 @@
       const appMap = state.pesosAppByBlock || {};
       const hasAppSync = Object.keys(appMap).length > 0;
 
+      ensureCrossReconciliationsState();
+      const activeCrossListForModels = findCrossDestinationSuggestions(pesosChronoState.toleranceMins);
+      const pendingCrossByBlockMap = new Map();
+      for (const s of activeCrossListForModels) {
+        if (!pendingCrossByBlockMap.has(s.fromBlockId)) pendingCrossByBlockMap.set(s.fromBlockId, []);
+        pendingCrossByBlockMap.get(s.fromBlockId).push(s);
+        if (!pendingCrossByBlockMap.has(s.toBlockId)) pendingCrossByBlockMap.set(s.toBlockId, []);
+        pendingCrossByBlockMap.get(s.toBlockId).push(s);
+      }
+      const approvedCrossByBlockMap = new Map();
+      for (const ap of (state.crossReconciliations.approved || [])) {
+        if (!approvedCrossByBlockMap.has(ap.fromBlockId)) approvedCrossByBlockMap.set(ap.fromBlockId, []);
+        approvedCrossByBlockMap.get(ap.fromBlockId).push(ap);
+        if (!approvedCrossByBlockMap.has(ap.toBlockId)) approvedCrossByBlockMap.set(ap.toBlockId, []);
+        approvedCrossByBlockMap.get(ap.toBlockId).push(ap);
+      }
+
       const models = state.blocks.map(b => {
         const isDgBlock = String(b.id).endsWith('|DG');
         const isPalletBlock = String(b.id).endsWith('|PALLET');
@@ -4794,12 +5155,21 @@
             : (delivDiff === 0 ? '✓ Delivery Conciliado' : `Δ Delivery Divergente (${delivDiff > 0 ? '+' + delivDiff : delivDiff})`);
         }
 
+        const pendingCrossForBlock = pendingCrossByBlockMap.get(b.id) || [];
+        const approvedCrossForBlock = approvedCrossByBlockMap.get(b.id) || [];
+
         let statusHtml = '';
         let statusLabel = '';
         let statusCategory = 'CONCILIADO';
         let isConciliado = false;
 
-        if (appVol !== null && appDiff !== 0) {
+        if (pendingCrossForBlock.length > 0) {
+          const deltaTxt = (appVol !== null && appDiff !== 0) ? ` (${appDiff > 0 ? '+' + appDiff : appDiff} vol)` : '';
+          statusLabel = `⏳ Aguard. Aprovação${deltaTxt}`;
+          statusCategory = 'DELTA_APP';
+          isConciliado = false;
+          statusHtml = `<span class="px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-500/30 font-bold text-[11px]">${statusLabel}</span>`;
+        } else if (appVol !== null && appDiff !== 0) {
           statusLabel = `Δ App Pesos (${appDiff > 0 ? '+' + appDiff : appDiff})`;
           statusCategory = 'DELTA_APP';
           statusHtml = `<span class="px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300 font-bold text-[11px]">${statusLabel}</span>`;
@@ -4812,10 +5182,10 @@
           statusCategory = 'DELTA_AJUSTE';
           statusHtml = `<span class="px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-bold text-[11px]">${statusLabel}</span>`;
         } else {
-          statusLabel = '✓ Conciliado';
+          statusLabel = approvedCrossForBlock.length > 0 ? '✓ Conciliado (Cruzado)' : '✓ Conciliado';
           statusCategory = 'CONCILIADO';
           isConciliado = true;
-          statusHtml = '<span class="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[11px]">✓ Conciliado</span>';
+          statusHtml = `<span class="px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[11px]">${statusLabel}</span>`;
         }
 
         const blocoDisplay = expDest;
@@ -4918,14 +5288,19 @@
         `;
       }
 
-      // Aplica filtros por coluna e busca global
+      // Aplica filtros por coluna, filtro rápido (Divergentes / Conciliados) e busca global
       const q = pesosTableFilterState.search;
       let filtered = allRows.filter(r => {
+        if (pesosTableFilterState.quickMode === 'DIVERGENTES' && r.isConciliado) return false;
+        if (pesosTableFilterState.quickMode === 'CONCILIADOS' && !r.isConciliado) return false;
         if (q) {
           const hay = `${r.colValues.bloco} ${r.colValues.cia_orig} ${r.colValues.status} ${r.colValues.delivery}`.toUpperCase();
           if (!hay.includes(q)) return false;
         }
         for (const [colKey, selSet] of Object.entries(pesosTableFilterState.selectedValues)) {
+          if (colKey === 'status' && (pesosTableFilterState.quickMode === 'DIVERGENTES' || pesosTableFilterState.quickMode === 'CONCILIADOS')) {
+            continue;
+          }
           if (selSet !== null && !selSet.has(r.colValues[colKey])) {
             return false;
           }
@@ -5048,10 +5423,7 @@
             <td class="py-2.5 px-3 text-center font-mono font-bold text-indigo-700 dark:text-indigo-400">${r.pesoVal.toFixed(2)} kg</td>
             <td class="py-2.5 px-3 text-center">${r.delivCellHtml}</td>
             <td class="py-2.5 px-3 text-center cursor-pointer" onclick="openPesosChronologyModal('${b.id}')">${r.statusHtml}</td>
-            <td class="py-2.5 px-3 text-center whitespace-nowrap space-x-1">
-              <button type="button" onclick="openPesosChronologyModal('${b.id}')" class="btn-web px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-[11px]" title="Ver comparativo de horários Sistema vs. App">
-                🕒 Horários
-              </button>
+            <td class="py-2.5 px-3 text-center whitespace-nowrap">
               <button type="button" onclick="openEditBlockWeightModal('${b.id}')" class="btn-web px-2.5 py-1 rounded-lg bg-purple-50 hover:bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-semibold text-[11px]">
                 Ajustar
               </button>
@@ -7993,9 +8365,7 @@
         return;
       }
 
-      const consOptionsHtml = (selectedCons) => state.cons.map(c =>
-        `<option value="${c.cons}" ${c.cons === selectedCons ? 'selected' : ''}>${c.cons} — ${c.dest} (${c.source === 'DELIVERY' ? 'DELIVERY' : c.tipo})</option>`
-      ).join('');
+      const consOptionsHtml = (selectedCons) => buildPendenciaConsOptionsByIataHtml('', selectedCons);
 
       const destOptionsHtml = (selectedDest) => {
         const uniqueDests = Array.from(new Set(FIXED_BLOCKS_TEMPLATE.map(b => b.dest)));
@@ -8019,12 +8389,23 @@
             </div>
           `;
         } else if (p.tipo === 'CONS INCORRETA') {
+          const savedIataFilter = (state._pendConsIataFilters && state._pendConsIataFilters[p.id] !== undefined)
+            ? state._pendConsIataFilters[p.id]
+            : '';
           actionPanelHtml = `
             <div class="pt-2.5 mt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div class="flex flex-wrap items-center gap-2 flex-1">
-                <span class="text-[11px] font-bold text-slate-600 dark:text-slate-300">Vincular à CONS da operação:</span>
-                <select id="selFixCons_${p.id}" class="bg-slate-50 dark:bg-slate-800 border border-purple-400 dark:border-purple-600 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold">
-                  ${consOptionsHtml(p.sugestaoCons)}
+                <span class="text-[11px] font-bold text-slate-600 dark:text-slate-300">Filtrar CONS por IATA:</span>
+                <div class="relative">
+                  <input id="inpIataConsFilter_${p.id}" type="text" maxlength="10" value="${savedIataFilter}"
+                    oninput="filterPendenciaConsSelectByIata('${p.id}', this.value)"
+                    placeholder="Ex: FOR, BSB, MAO..."
+                    class="w-36 bg-white dark:bg-slate-800 border border-purple-400 dark:border-purple-600 rounded-lg pl-2.5 pr-6 py-1.5 text-xs font-mono font-extrabold uppercase focus:outline-none focus:ring-2 focus:ring-purple-600" />
+                  <button type="button" onclick="document.getElementById('inpIataConsFilter_${p.id}').value=''; filterPendenciaConsSelectByIata('${p.id}', '');"
+                    class="absolute right-1.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold" title="Limpar IATA">&times;</button>
+                </div>
+                <select id="selFixCons_${p.id}" class="bg-slate-50 dark:bg-slate-800 border border-purple-400 dark:border-purple-600 rounded-lg px-2.5 py-1.5 text-xs font-mono font-bold min-w-[230px]">
+                  ${buildPendenciaConsOptionsByIataHtml(savedIataFilter, p.sugestaoCons)}
                 </select>
                 <button type="button" onclick="resolvePendenciaConsIncorreta('${p.id}', 'LINK_CONS')" class="btn-web px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-2xs">
                   ✓ Vincular à CONS Selecionada
@@ -8099,9 +8480,12 @@
             <div class="pt-2.5 mt-2 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2">
               <div class="flex flex-wrap items-center gap-2">
                 <label class="text-[11px] font-bold">AWB (12 díg.): <input id="inpFixAwb_${p.id}" type="text" maxlength="12" value="${String(p.awb).replace(/\D/g, '')}" class="w-32 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 font-mono text-xs" /></label>
-                <label class="text-[11px] font-bold">CONS:
-                  <select id="selFixIncCons_${p.id}" class="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 font-mono text-xs">
-                    ${consOptionsHtml(p.sugestaoCons)}
+                <label class="text-[11px] font-bold flex items-center gap-1">IATA CONS:
+                  <input id="inpIataIncConsFilter_${p.id}" type="text" maxlength="10" placeholder="Ex: FOR, BSB..."
+                    oninput="filterPendenciaIncConsSelectByIata('${p.id}', this.value)"
+                    class="w-24 bg-white dark:bg-slate-800 border border-purple-400 rounded-lg px-2 py-1 font-mono text-xs uppercase font-bold" />
+                  <select id="selFixIncCons_${p.id}" class="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 font-mono text-xs min-w-[200px]">
+                    ${buildPendenciaConsOptionsByIataHtml('', p.sugestaoCons)}
                   </select>
                 </label>
                 <label class="text-[11px] font-bold">Peso: <input id="inpFixIncPeso_${p.id}" type="number" step="0.1" value="${p.wt || 1.0}" class="w-20 bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1 font-mono text-xs" /></label>
@@ -8152,6 +8536,44 @@
           </div>
         `;
       }).join('');
+    }
+
+    function buildPendenciaConsOptionsByIataHtml(iataQuery, selectedCons = '') {
+      const q = String(iataQuery || '').trim().toUpperCase();
+      if (!q) {
+        return `<option value="">← Digite a IATA do destino para listar as CONS...</option>`;
+      }
+      const matches = (state.cons || []).filter(c => {
+        const dest = String(c.dest || '').toUpperCase();
+        const origDest = String(c.origDest || '').toUpperCase();
+        const desc = String(c.desc || '').toUpperCase();
+        const iata3 = dest.slice(0, 3);
+        return dest.includes(q) || origDest.includes(q) || iata3 === q.slice(0, 3) || desc.includes(q);
+      });
+      if (matches.length === 0) {
+        return `<option value="">Nenhuma CONS encontrada para "${q}"</option>`;
+      }
+      return matches.map((c, idx) => {
+        const isSel = selectedCons ? (c.cons === selectedCons) : (idx === 0);
+        const seals = (state.lacres && state.lacres[c.cons] && state.lacres[c.cons].length > 0)
+          ? ` · Lacre ${state.lacres[c.cons].join(',')}`
+          : '';
+        return `<option value="${c.cons}" ${isSel ? 'selected' : ''}>${c.cons} — ${c.dest} (${c.source === 'DELIVERY' ? 'DELIVERY' : c.tipo}${seals})</option>`;
+      }).join('');
+    }
+
+    function filterPendenciaConsSelectByIata(pendId, val) {
+      if (!state._pendConsIataFilters) state._pendConsIataFilters = {};
+      state._pendConsIataFilters[pendId] = String(val || '').toUpperCase();
+      const sel = document.getElementById(`selFixCons_${pendId}`);
+      if (!sel) return;
+      sel.innerHTML = buildPendenciaConsOptionsByIataHtml(val, '');
+    }
+
+    function filterPendenciaIncConsSelectByIata(pendId, val) {
+      const sel = document.getElementById(`selFixIncCons_${pendId}`);
+      if (!sel) return;
+      sel.innerHTML = buildPendenciaConsOptionsByIataHtml(val, '');
     }
 
     function resolvePendenciaConsIncorreta(pendId, mode) {
@@ -9675,31 +10097,37 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
           const confidence = Math.min(99, Math.max(40, score));
           if (confidence >= 55) {
-            suggestions.push({
-              id: `CROSS_${exc.blockId}_${mis.blockId}_${exc.mins}_${mis.mins}`,
-              fromBlockId: exc.blockId,
-              fromDestLabel: exc.destLabel,
-              fromOrig: exc.orig,
-              fromCia: exc.cia,
-              fromAppTime: exc.time,
-              fromExcessVol: exc.excessVol,
-              fromExcessKg: exc.excessKg,
-              fromNetDiff: exc.netBoxAppDiff,
-              toBlockId: mis.blockId,
-              toDestLabel: mis.destLabel,
-              toOrig: mis.orig,
-              toCia: mis.cia,
-              toSysTime: mis.time,
-              toMissingVol: mis.missingVol,
-              toMissingKg: candidateSysKg,
-              toNetDiff: mis.netBoxAppDiff,
-              matchedVol,
-              timeDiff,
-              kgDiff,
-              confidence,
-              reasons,
-              candidateAwbs
-            });
+            const sugId = `CROSS_${exc.blockId}_${mis.blockId}_${exc.mins}_${mis.mins}`;
+            ensureCrossReconciliationsState();
+            const isIgnored = state.crossReconciliations.ignoredIds.includes(sugId);
+            const isApproved = state.crossReconciliations.approved.some(x => x.id === sugId);
+            if (!isIgnored && !isApproved) {
+              suggestions.push({
+                id: sugId,
+                fromBlockId: exc.blockId,
+                fromDestLabel: exc.destLabel,
+                fromOrig: exc.orig,
+                fromCia: exc.cia,
+                fromAppTime: exc.time,
+                fromExcessVol: exc.excessVol,
+                fromExcessKg: exc.excessKg,
+                fromNetDiff: exc.netBoxAppDiff,
+                toBlockId: mis.blockId,
+                toDestLabel: mis.destLabel,
+                toOrig: mis.orig,
+                toCia: mis.cia,
+                toSysTime: mis.time,
+                toMissingVol: mis.missingVol,
+                toMissingKg: candidateSysKg,
+                toNetDiff: mis.netBoxAppDiff,
+                matchedVol,
+                timeDiff,
+                kgDiff,
+                confidence,
+                reasons,
+                candidateAwbs
+              });
+            }
           }
         }
       }
@@ -9713,6 +10141,423 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       return suggestions;
     }
 
+    function ensureCrossReconciliationsState() {
+      if (!state.crossReconciliations || typeof state.crossReconciliations !== 'object') {
+        state.crossReconciliations = { ignoredIds: [], approved: [] };
+      }
+      if (!Array.isArray(state.crossReconciliations.ignoredIds)) {
+        state.crossReconciliations.ignoredIds = [];
+      }
+      if (!Array.isArray(state.crossReconciliations.approved)) {
+        state.crossReconciliations.approved = [];
+      }
+    }
+
+    // Executa a transferência/conciliação de volumes e peso no App entre dois destinos (Aprovação de sugestão ou Cruzamento Manual)
+    function executeCrossDestinationTransfer({ id, fromBlockId, toBlockId, vol, kg, fromTime, toTime, isManual = false, ignoredSuggestionId = '' }) {
+      ensureCrossReconciliationsState();
+      const numVol = Math.max(1, parseInt(vol) || 1);
+      const numKg = Math.max(0, Math.round(Number(kg || 0) * 100) / 100);
+      if (!fromBlockId || !toBlockId || fromBlockId === toBlockId) {
+        showToast('Selecione dois destinos diferentes para realizar o cruzamento.');
+        return false;
+      }
+
+      const bFrom = (state.blocks || []).find(b => b.id === fromBlockId);
+      const bTo = (state.blocks || []).find(b => b.id === toBlockId);
+      if (!bFrom || !bTo) return false;
+
+      if (!state.pesosAppByBlock) state.pesosAppByBlock = {};
+      if (!state.pesosAppByBlock[fromBlockId]) {
+        state.pesosAppByBlock[fromBlockId] = {
+          caixasVol: Number(bFrom.vol || 0), caixasKg: Number(bFrom.peso || 0),
+          sacasVol: 0, sacasKg: 0, deliveryVol: 0, deliveryKg: 0, comailVol: 0, comailKg: 0,
+          dgVol: 0, dgKg: 0, palletVol: 0, palletKg: 0,
+          totalVol: Number(bFrom.vol || 0), totalKg: Number(bFrom.peso || 0), logs: []
+        };
+      }
+      if (!state.pesosAppByBlock[toBlockId]) {
+        state.pesosAppByBlock[toBlockId] = {
+          caixasVol: Number(bTo.vol || 0), caixasKg: Number(bTo.peso || 0),
+          sacasVol: 0, sacasKg: 0, deliveryVol: 0, deliveryKg: 0, comailVol: 0, comailKg: 0,
+          dgVol: 0, dgKg: 0, palletVol: 0, palletKg: 0,
+          totalVol: Number(bTo.vol || 0), totalKg: Number(bTo.peso || 0), logs: []
+        };
+      }
+
+      const appFrom = state.pesosAppByBlock[fromBlockId];
+      const appTo = state.pesosAppByBlock[toBlockId];
+      if (!Array.isArray(appFrom.logs)) appFrom.logs = [];
+      if (!Array.isArray(appTo.logs)) appTo.logs = [];
+
+      const crossId = id || `MANUAL_CROSS_${fromBlockId}_${toBlockId}_${Date.now()}`;
+      const fromLabel = exportDestNameForMinutaWeb(bFrom.id, bFrom.dest);
+      const toLabel = exportDestNameForMinutaWeb(bTo.id, bTo.dest);
+      const timeOrigin = fromTime || toTime || '20:00';
+      const timeTarget = toTime || fromTime || '20:00';
+
+      // Ajusta logs de `fromBlockId` no horário correspondente
+      let remainingVolToDeduct = numVol;
+      let remainingKgToDeduct = numKg;
+      const targetMins = timeStrToMinutes(timeOrigin);
+      const removedOrReducedLogs = [];
+
+      // Prioriza logs de CAIXA no mesmo minuto ou próximos
+      const candidateLogs = appFrom.logs
+        .filter(l => String(l.cat || 'CAIXA').toUpperCase() !== 'SACA')
+        .sort((a, bLog) => {
+          const da = (a.mins !== null && targetMins !== null) ? Math.abs(a.mins - targetMins) : 999;
+          const db = (bLog.mins !== null && targetMins !== null) ? Math.abs(bLog.mins - targetMins) : 999;
+          return da - db;
+        });
+
+      for (const lg of candidateLogs) {
+        if (remainingVolToDeduct <= 0) break;
+        const lgVol = Number(lg.vol || 1);
+        const lgKg = Number(lg.kg || 0);
+        if (lgVol <= remainingVolToDeduct) {
+          remainingVolToDeduct -= lgVol;
+          remainingKgToDeduct = Math.max(0, Math.round((remainingKgToDeduct - lgKg) * 100) / 100);
+          removedOrReducedLogs.push({ mode: 'REMOVE', snapshot: { ...lg } });
+          const idx = appFrom.logs.indexOf(lg);
+          if (idx >= 0) appFrom.logs.splice(idx, 1);
+        } else {
+          const deductKgHere = remainingKgToDeduct > 0 ? Math.min(lgKg, remainingKgToDeduct) : Math.round((lgKg * (remainingVolToDeduct / lgVol)) * 100) / 100;
+          removedOrReducedLogs.push({ mode: 'REDUCE', logId: lg.id, deductVol: remainingVolToDeduct, deductKg: deductKgHere });
+          lg.vol = lgVol - remainingVolToDeduct;
+          lg.kg = Math.max(0, Math.round((lgKg - deductKgHere) * 100) / 100);
+          remainingVolToDeduct = 0;
+          remainingKgToDeduct = 0;
+        }
+      }
+
+      // Atualiza totais de `appFrom` e `bFrom`
+      appFrom.caixasVol = Math.max(0, Number(appFrom.caixasVol || 0) - numVol);
+      appFrom.caixasKg = Math.max(0, Math.round((Number(appFrom.caixasKg || 0) - numKg) * 100) / 100);
+      appFrom.totalVol = Math.max(0, Number(appFrom.totalVol || 0) - numVol);
+      appFrom.totalKg = Math.max(0, Math.round((Number(appFrom.totalKg || 0) - numKg) * 100) / 100);
+      bFrom.vol = appFrom.totalVol;
+      if (Number(bFrom.peso || 0) >= numKg) {
+        bFrom.peso = Math.max(0, Math.round((Number(bFrom.peso || 0) - numKg) * 100) / 100);
+      }
+
+      // Adiciona o lançamento conciliado em `appTo` no horário da coleta do destino correto
+      const newLogEntry = {
+        id: `RECON_${crossId}`,
+        time: timeTarget,
+        mins: timeStrToMinutes(timeTarget),
+        vol: numVol,
+        kg: numKg,
+        cat: 'CAIXA',
+        tipo: 'NORMAL',
+        awb: '',
+        reconciledFrom: fromLabel,
+        crossId
+      };
+      appTo.logs.push(newLogEntry);
+      appTo.caixasVol = Number(appTo.caixasVol || 0) + numVol;
+      appTo.caixasKg = Math.round((Number(appTo.caixasKg || 0) + numKg) * 100) / 100;
+      appTo.totalVol = Number(appTo.totalVol || 0) + numVol;
+      appTo.totalKg = Math.round((Number(appTo.totalKg || 0) + numKg) * 100) / 100;
+      bTo.vol = appTo.totalVol;
+      bTo.peso = Math.round((Number(bTo.peso || 0) + numKg) * 100) / 100;
+
+      if (ignoredSuggestionId && !state.crossReconciliations.ignoredIds.includes(ignoredSuggestionId)) {
+        state.crossReconciliations.ignoredIds.push(ignoredSuggestionId);
+      }
+
+      state.crossReconciliations.approved.push({
+        id: crossId,
+        fromBlockId,
+        fromDestLabel: fromLabel,
+        toBlockId,
+        toDestLabel: toLabel,
+        vol: numVol,
+        kg: numKg,
+        fromTime: timeOrigin,
+        toTime: timeTarget,
+        isManual,
+        approvedAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        removedOrReducedLogs
+      });
+
+      saveCatalogAndState();
+      renderAll();
+      if (pesosChronoState.activeBlockId && document.getElementById('pesosChronoModalContainer')) {
+        renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
+      }
+      showToast(`✅ Cruzamento aprovado: ${numVol} vol (${numKg.toFixed(1)} kg) transferidos de ${fromLabel} para ${toLabel}!`);
+      return true;
+    }
+
+    function approveCrossDestinationSuggestion(sugId) {
+      const suggestions = findCrossDestinationSuggestions(pesosChronoState.toleranceMins);
+      const s = suggestions.find(x => x.id === sugId);
+      if (!s) return;
+      const ok = executeCrossDestinationTransfer({
+        id: s.id,
+        fromBlockId: s.fromBlockId,
+        toBlockId: s.toBlockId,
+        vol: s.matchedVol,
+        kg: s.fromExcessKg,
+        fromTime: s.fromAppTime,
+        toTime: s.toSysTime,
+        isManual: false
+      });
+      if (ok && document.getElementById('globalCrossDestModalWrapper')) {
+        openGlobalCrossDestinationModal();
+      }
+    }
+
+    function ignoreCrossDestinationSuggestion(sugId) {
+      ensureCrossReconciliationsState();
+      if (!state.crossReconciliations.ignoredIds.includes(sugId)) {
+        state.crossReconciliations.ignoredIds.push(sugId);
+      }
+      saveCatalogAndState();
+      renderAll();
+      if (pesosChronoState.activeBlockId && document.getElementById('pesosChronoModalContainer')) {
+        renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
+      } else if (document.getElementById('globalCrossDestModalWrapper')) {
+        openGlobalCrossDestinationModal();
+      }
+      showToast('Sugestão de cruzamento ignorada.');
+    }
+
+    function restoreIgnoredCrossSuggestions() {
+      ensureCrossReconciliationsState();
+      state.crossReconciliations.ignoredIds = [];
+      saveCatalogAndState();
+      renderAll();
+      if (document.getElementById('globalCrossDestModalWrapper')) {
+        openGlobalCrossDestinationModal();
+      }
+      showToast('Sugestões ignoradas restauradas para reavaliação.');
+    }
+
+    function revertApprovedCrossReconciliation(crossId) {
+      ensureCrossReconciliationsState();
+      const idx = state.crossReconciliations.approved.findIndex(x => x.id === crossId);
+      if (idx === -1) return;
+      const rec = state.crossReconciliations.approved[idx];
+
+      const bFrom = (state.blocks || []).find(b => b.id === rec.fromBlockId);
+      const bTo = (state.blocks || []).find(b => b.id === rec.toBlockId);
+      const appFrom = state.pesosAppByBlock && state.pesosAppByBlock[rec.fromBlockId];
+      const appTo = state.pesosAppByBlock && state.pesosAppByBlock[rec.toBlockId];
+
+      if (appTo) {
+        if (Array.isArray(appTo.logs)) {
+          appTo.logs = appTo.logs.filter(l => l.crossId !== crossId && l.id !== `RECON_${crossId}`);
+        }
+        appTo.caixasVol = Math.max(0, Number(appTo.caixasVol || 0) - rec.vol);
+        appTo.caixasKg = Math.max(0, Math.round((Number(appTo.caixasKg || 0) - rec.kg) * 100) / 100);
+        appTo.totalVol = Math.max(0, Number(appTo.totalVol || 0) - rec.vol);
+        appTo.totalKg = Math.max(0, Math.round((Number(appTo.totalKg || 0) - rec.kg) * 100) / 100);
+        if (bTo) {
+          bTo.vol = appTo.totalVol;
+          bTo.peso = Math.max(0, Math.round((Number(bTo.peso || 0) - rec.kg) * 100) / 100);
+        }
+      }
+
+      if (appFrom) {
+        if (!Array.isArray(appFrom.logs)) appFrom.logs = [];
+        for (const item of (rec.removedOrReducedLogs || [])) {
+          if (item.mode === 'REMOVE' && item.snapshot) {
+            appFrom.logs.push({ ...item.snapshot });
+          } else if (item.mode === 'REDUCE') {
+            const target = appFrom.logs.find(l => l.id === item.logId);
+            if (target) {
+              target.vol = Number(target.vol || 0) + Number(item.deductVol || 0);
+              target.kg = Math.round((Number(target.kg || 0) + Number(item.deductKg || 0)) * 100) / 100;
+            }
+          }
+        }
+        appFrom.caixasVol = Number(appFrom.caixasVol || 0) + rec.vol;
+        appFrom.caixasKg = Math.round((Number(appFrom.caixasKg || 0) + rec.kg) * 100) / 100;
+        appFrom.totalVol = Number(appFrom.totalVol || 0) + rec.vol;
+        appFrom.totalKg = Math.round((Number(appFrom.totalKg || 0) + rec.kg) * 100) / 100;
+        if (bFrom) {
+          bFrom.vol = appFrom.totalVol;
+          bFrom.peso = Math.round((Number(bFrom.peso || 0) + rec.kg) * 100) / 100;
+        }
+      }
+
+      state.crossReconciliations.approved.splice(idx, 1);
+      saveCatalogAndState();
+      renderAll();
+      if (pesosChronoState.activeBlockId && document.getElementById('pesosChronoModalContainer')) {
+        renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
+      } else if (document.getElementById('globalCrossDestModalWrapper')) {
+        openGlobalCrossDestinationModal();
+      }
+      showToast(`↺ Cruzamento entre ${rec.fromDestLabel} e ${rec.toDestLabel} desfeito.`);
+    }
+
+    function openManualCrossReconciliationModal(prefillFromBlockId = '', prefillToBlockId = '', prefillVol = 1, prefillKg = 10, prefillTime = '', replaceSuggestionId = '') {
+      const allRows = buildPesosRowModels();
+      // Ordena blocos com sobra no App primeiro no select de origem, e blocos com falta no App primeiro no select de destino
+      const fromSorted = [...allRows].sort((a, bRow) => ((bRow.appVol ?? 0) - bRow.calcVol) - ((a.appVol ?? 0) - a.calcVol));
+      const toSorted = [...allRows].sort((a, bRow) => ((a.appVol ?? 0) - a.calcVol) - ((bRow.appVol ?? 0) - bRow.calcVol));
+
+      const defaultFrom = prefillFromBlockId || (fromSorted[0] ? fromSorted[0].block.id : 'VIXA');
+      const defaultTo = prefillToBlockId || (toSorted.find(r => r.block.id !== defaultFrom)?.block.id || 'MAOA');
+
+      const fromOptionsHtml = fromSorted.map(r => {
+        const diff = (r.appVol !== null ? r.appVol : 0) - r.calcVol;
+        const diffTxt = diff > 0 ? `+${diff} vol no App` : `${diff} vol no App`;
+        return `<option value="${r.block.id}" ${r.block.id === defaultFrom ? 'selected' : ''}>${r.expDest} (${r.orig} · ${r.cia}) — Sist: ${r.calcVol} vs App: ${r.appVol ?? 0} (${diffTxt})</option>`;
+      }).join('');
+
+      const toOptionsHtml = toSorted.map(r => {
+        const diff = (r.appVol !== null ? r.appVol : 0) - r.calcVol;
+        const diffTxt = diff > 0 ? `+${diff} vol no App` : `${diff} vol no App`;
+        return `<option value="${r.block.id}" ${r.block.id === defaultTo ? 'selected' : ''}>${r.expDest} (${r.orig} · ${r.cia}) — Sist: ${r.calcVol} vs App: ${r.appVol ?? 0} (${diffTxt})</option>`;
+      }).join('');
+
+      const bodyHtml = `
+        <div class="space-y-4">
+          <div class="p-3 rounded-xl bg-purple-50/80 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800 text-xs text-slate-700 dark:text-slate-200">
+            Use esta ferramenta para <b>cruzar e transferir manualmente</b> volumes pesados por engano em um destino para o destino correto da coleta. Assim que confirmado, o saldo de ambos os destinos é conciliado.
+          </div>
+
+          <input type="hidden" id="manCrossReplaceSugId" value="${replaceSuggestionId || ''}" />
+
+          <div class="space-y-3">
+            <div>
+              <label class="block text-[11px] font-extrabold uppercase text-rose-600 dark:text-rose-400 mb-1">
+                1. De qual Destino sairão os volumes? (Onde foi pesado a mais no App)
+              </label>
+              <select id="manCrossFromBlock" onchange="onManualCrossFromBlockChange()" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold">
+                ${fromOptionsHtml}
+              </select>
+              <div id="manCrossFromLaunchesHelper" class="mt-1.5"></div>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-extrabold uppercase text-emerald-600 dark:text-emerald-400 mb-1">
+                2. Para qual Destino irão os volumes? (Destino correto da coleta no Sistema)
+              </label>
+              <select id="manCrossToBlock" onchange="onManualCrossToBlockChange()" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-bold">
+                ${toOptionsHtml}
+              </select>
+              <div id="manCrossToMissingHelper" class="mt-1.5"></div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 pt-1">
+              <div>
+                <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Volumes a Mover</label>
+                <input id="manCrossVol" type="number" min="1" step="1" value="${prefillVol || 1}" class="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-extrabold" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Peso da Balança (kg)</label>
+                <input id="manCrossKg" type="number" min="0.1" step="0.1" value="${Number(prefillKg || 10).toFixed(1)}" class="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-extrabold" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Horário (HH:MM)</label>
+                <input id="manCrossTime" type="text" placeholder="Ex: 20:00" value="${prefillTime || '20:00'}" class="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-xl px-3 py-2 text-xs font-mono font-extrabold" />
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      openModal(
+        '⇄ Cruzamento Manual de Volumes entre Destinos',
+        bodyHtml,
+        `<div class="flex items-center justify-end gap-2 w-full">
+          <button type="button" onclick="closeModal()" class="px-3.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">Cancelar</button>
+          <button type="button" onclick="confirmManualCrossReconciliation()" class="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-xs">
+            ✓ Aprovar e Aplicar Cruzamento
+          </button>
+        </div>`,
+        'max-w-xl'
+      );
+
+      onManualCrossFromBlockChange(!prefillTime);
+      onManualCrossToBlockChange();
+    }
+
+    function onManualCrossFromBlockChange(autoFillInputs = true) {
+      const sel = document.getElementById('manCrossFromBlock');
+      const helper = document.getElementById('manCrossFromLaunchesHelper');
+      if (!sel || !helper) return;
+      const bid = sel.value;
+      const analysis = buildBlockChronologyAnalysis(bid, pesosChronoState.toleranceMins);
+      const excessSlots = analysis.slots.filter(s => s.appVol > s.sysVol && s.status !== 'SYNTHETIC_SUMMARY');
+      if (excessSlots.length === 0) {
+        helper.innerHTML = `<div class="text-[11px] text-slate-400">Nenhuma faixa com sobra explícita no App neste destino (você ainda pode informar volume/peso manualmente abaixo).</div>`;
+        return;
+      }
+      if (autoFillInputs && excessSlots[0]) {
+        const s0 = excessSlots[0];
+        const exVol = s0.appVol - s0.sysVol;
+        const exKg = s0.sysVol === 0 ? s0.appKg : Math.max(0.5, Math.round((s0.appKg - s0.sysKg) * 100) / 100);
+        const vInp = document.getElementById('manCrossVol');
+        const kInp = document.getElementById('manCrossKg');
+        const tInp = document.getElementById('manCrossTime');
+        if (vInp) vInp.value = exVol;
+        if (kInp) kInp.value = exKg.toFixed(1);
+        if (tInp) tInp.value = s0.appTime;
+      }
+      helper.innerHTML = `
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span class="font-bold text-slate-500">Sobras no App deste destino (clique p/ preencher):</span>
+          ${excessSlots.map(s => {
+            const exVol = s.appVol - s.sysVol;
+            const exKg = s.sysVol === 0 ? s.appKg : Math.max(0.5, Math.round((s.appKg - s.sysKg) * 100) / 100);
+            return `<button type="button" onclick="document.getElementById('manCrossVol').value='${exVol}'; document.getElementById('manCrossKg').value='${exKg.toFixed(1)}'; document.getElementById('manCrossTime').value='${s.appTime}';" class="px-2 py-0.5 rounded bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 font-mono font-bold text-[10px]">+${exVol} vol às ${s.appTime} (${exKg.toFixed(1)}kg)</button>`;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function onManualCrossToBlockChange() {
+      const sel = document.getElementById('manCrossToBlock');
+      const helper = document.getElementById('manCrossToMissingHelper');
+      if (!sel || !helper) return;
+      const bid = sel.value;
+      const analysis = buildBlockChronologyAnalysis(bid, pesosChronoState.toleranceMins);
+      const missingSlots = analysis.slots.filter(s => s.sysVol > s.appVol);
+      if (missingSlots.length === 0) {
+        helper.innerHTML = `<div class="text-[11px] text-slate-400">Nenhuma coleta sem pesagem pendente neste destino.</div>`;
+        return;
+      }
+      helper.innerHTML = `
+        <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+          <span class="font-bold text-slate-500">Coletas sem pesagem neste destino (clique p/ usar horário):</span>
+          ${missingSlots.map(s => {
+            const misVol = s.sysVol - s.appVol;
+            const misKg = s.appVol === 0 ? s.sysKg : Math.max(0.5, Math.round((s.sysKg - s.appKg) * 100) / 100);
+            return `<button type="button" onclick="document.getElementById('manCrossTime').value='${s.sysTime}';" class="px-2 py-0.5 rounded bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-mono font-bold text-[10px]">-${misVol} vol às ${s.sysTime} (${misKg.toFixed(1)}kg DRE)</button>`;
+          }).join('')}
+        </div>
+      `;
+    }
+
+    function confirmManualCrossReconciliation() {
+      const fromBlockId = document.getElementById('manCrossFromBlock')?.value || '';
+      const toBlockId = document.getElementById('manCrossToBlock')?.value || '';
+      const vol = parseInt(document.getElementById('manCrossVol')?.value || '1');
+      const kg = parseFloat(document.getElementById('manCrossKg')?.value || '0');
+      const time = String(document.getElementById('manCrossTime')?.value || '20:00').trim() || '20:00';
+      const replaceSugId = document.getElementById('manCrossReplaceSugId')?.value || '';
+
+      const ok = executeCrossDestinationTransfer({
+        fromBlockId,
+        toBlockId,
+        vol,
+        kg,
+        fromTime: time,
+        toTime: time,
+        isManual: true,
+        ignoredSuggestionId: replaceSugId
+      });
+      if (ok) {
+        closeModal();
+      }
+    }
+
     function getQuickBlockChronoBadgeInfo(blockId, allCrossSuggestions) {
       const relatedCross = (allCrossSuggestions || []).filter(s => s.fromBlockId === blockId || s.toBlockId === blockId);
       if (relatedCross.length > 0) {
@@ -9720,30 +10565,18 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         const partner = top.fromBlockId === blockId ? top.toDestLabel : top.fromDestLabel;
         return {
           badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 text-[9px] font-extrabold">🔗 Sugestão ↔ ${partner} (${top.confidence}%)</span>`,
-          subTextHtml: `<div class="text-[10px] font-medium text-rose-600 dark:text-rose-400 mt-0.5">Possível inversão às ${top.fromAppTime} (${top.matchedVol} vol) · Clique p/ ver</div>`
+          subTextHtml: `<div class="text-[10px] font-medium text-rose-600 dark:text-rose-400 mt-0.5">Aguardando aprovação (${top.matchedVol} vol às ${top.fromAppTime}) · Clique p/ avaliar</div>`
         };
       }
       const analysis = buildBlockChronologyAnalysis(blockId, pesosChronoState.toleranceMins);
-      if (analysis.totalSysBoxVol === 0 && analysis.totalAppBoxVol === 0) {
-        return {
-          badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[9px] font-semibold opacity-80 group-hover:opacity-100">🕒 Horários</span>`,
-          subTextHtml: ''
-        };
-      }
       if (analysis.hasAppSync && analysis.hasIndividualAppTimes && analysis.divergentSlotsCount > 0) {
         return {
-          badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[9px] font-extrabold">🕒 ${analysis.divergentSlotsCount} diverg. horário</span>`,
-          subTextHtml: `<div class="text-[10px] text-slate-400 mt-0.5">Clique para comparar Sistema vs. App</div>`
-        };
-      }
-      if (analysis.hasAppSync && analysis.hasIndividualAppTimes && analysis.slots.length > 0) {
-        return {
-          badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 text-[9px] font-extrabold">🕒 Horários OK</span>`,
-          subTextHtml: ''
+          badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 text-[9px] font-extrabold">⚠ ${analysis.divergentSlotsCount} diverg. horário</span>`,
+          subTextHtml: `<div class="text-[10px] text-slate-400 mt-0.5">Clique no destino para comparar Sistema vs. App</div>`
         };
       }
       return {
-        badgeHtml: `<span class="px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-600 dark:text-purple-300 text-[9px] font-bold group-hover:bg-purple-600 group-hover:text-white transition">🕒 Ver Coletas (${analysis.totalSysBoxVol} cx)</span>`,
+        badgeHtml: '',
         subTextHtml: ''
       };
     }
@@ -9769,10 +10602,11 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const topCards = suggestions.slice(0, 3).map(s => {
         const awbListStr = s.candidateAwbs.map(a => a.awb).join(', ');
         return `
-          <div class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-300/80 dark:border-rose-800/80 shadow-2xs flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div class="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-300/80 dark:border-rose-800/80 shadow-2xs flex flex-col lg:flex-row lg:items-center justify-between gap-2.5">
             <div class="space-y-1">
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="px-2 py-0.5 rounded-full bg-rose-600 text-white font-extrabold text-[10px]">${s.confidence}% Confiança</span>
+                <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-extrabold text-[10px]">⏳ Aguardando sua Aprovação</span>
                 <span class="font-extrabold text-xs text-slate-900 dark:text-white">
                   Pesado em <span class="text-rose-600 dark:text-rose-400 underline cursor-pointer" onclick="openPesosChronologyModal('${s.fromBlockId}')">${s.fromDestLabel}</span> (${s.fromAppTime})
                   ↔ Coletado em <span class="text-purple-600 dark:text-purple-400 underline cursor-pointer" onclick="openPesosChronologyModal('${s.toBlockId}')">${s.toDestLabel}</span> (${s.toSysTime})
@@ -9782,12 +10616,15 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
                 <b>${s.fromDestLabel}</b> tem <b>+${s.fromExcessVol} vol (${s.fromExcessKg.toFixed(1)} kg)</b> pesados às <b>${s.fromAppTime}</b> sem coleta local, enquanto <b>${s.toDestLabel}</b> tem <b>${s.toMissingVol} vol (${s.toMissingKg.toFixed(1)} kg DRE)</b> coletados às <b>${s.toSysTime}</b> sem pesagem (AWB: <span class="font-mono font-bold">${awbListStr}</span>).
               </div>
             </div>
-            <div class="flex items-center gap-1.5 shrink-0">
-              <button type="button" onclick="openPesosChronologyModal('${s.fromBlockId}')" class="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 font-bold text-[11px]">
-                Ver ${s.fromDestLabel}
+            <div class="flex flex-wrap items-center gap-1.5 shrink-0">
+              <button type="button" onclick="approveCrossDestinationSuggestion('${s.id}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-2xs">
+                ✓ Aprovar Cruzamento
               </button>
-              <button type="button" onclick="openPesosChronologyModal('${s.toBlockId}')" class="px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px]">
-                Ver ${s.toDestLabel}
+              <button type="button" onclick="openManualCrossReconciliationModal('${s.fromBlockId}', '${s.toBlockId}', ${s.matchedVol}, ${s.fromExcessKg}, '${s.fromAppTime}', '${s.id}')" class="px-2.5 py-1.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-700 dark:text-indigo-300 font-bold text-[11px]">
+                ⇄ Alterar / Manual
+              </button>
+              <button type="button" onclick="ignoreCrossDestinationSuggestion('${s.id}')" class="px-2.5 py-1.5 rounded-lg bg-slate-200 hover:bg-rose-500 hover:text-white dark:bg-slate-800 dark:hover:bg-rose-600 text-slate-600 dark:text-slate-300 font-bold text-[11px] transition">
+                ✕ Ignorar
               </button>
             </div>
           </div>
@@ -9798,11 +10635,11 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         <div class="rounded-2xl p-4 bg-rose-50/90 dark:bg-rose-950/30 border border-rose-300 dark:border-rose-800/80 space-y-2.5">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <div class="flex items-center gap-2">
-              <span class="px-2 py-0.5 rounded-md bg-rose-600 text-white font-extrabold text-[10px] uppercase">Cruzamento Inteligente de Horários</span>
-              <span class="font-bold text-xs text-rose-950 dark:text-rose-200">${suggestions.length} possível(is) pesagem(ns) lançada(s) em destino trocado identificada(s)!</span>
+              <span class="px-2 py-0.5 rounded-md bg-rose-600 text-white font-extrabold text-[10px] uppercase">Cruzamento Inteligente entre Destinos</span>
+              <span class="font-bold text-xs text-rose-950 dark:text-rose-200">${suggestions.length} sugestão(ões) aguardando aprovação (aprove, altere manualmente ou ignore):</span>
             </div>
             <button type="button" onclick="openGlobalCrossDestinationModal()" class="text-xs font-extrabold text-rose-700 dark:text-rose-300 underline hover:opacity-80">
-              Ver todas as análises (${suggestions.length}) →
+              Gerenciar todas (${suggestions.length}) →
             </button>
           </div>
           <div class="space-y-2">${topCards}</div>
@@ -9928,8 +10765,11 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             💡 Passe o mouse sobre qualquer volume de <b>Sistema</b> para ver a AWB, peso DRE, destinatário e CONS.
           </div>
           <div class="flex items-center gap-2">
+            <button type="button" onclick="openManualCrossReconciliationModal('${blockId}')" class="px-3 py-1.5 rounded-lg bg-indigo-500/15 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/25 font-bold text-xs">
+              ⇄ Cruzamento Manual
+            </button>
             <button type="button" onclick="openGlobalCrossDestinationModal()" class="px-3.5 py-1.5 rounded-lg bg-purple-500/15 text-purple-700 dark:text-purple-300 hover:bg-purple-500/25 font-bold text-xs">
-              🔗 Ver Cruzamento Global entre Destinos
+              🔗 Ver Cruzamentos entre Destinos
             </button>
             <button type="button" onclick="hideChronoAwbTooltip(); closeModal();" class="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">
               Fechar
@@ -9944,10 +10784,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     function renderPesosChronologyModalBody(blockId) {
       const container = document.getElementById('pesosChronoModalContainer');
       if (!container) return;
+      ensureCrossReconciliationsState();
       const tol = pesosChronoState.toleranceMins;
       const analysis = buildBlockChronologyAnalysis(blockId, tol);
       const allCross = findCrossDestinationSuggestions(tol);
       const blockCross = allCross.filter(s => s.fromBlockId === blockId || s.toBlockId === blockId);
+      const approvedHere = (state.crossReconciliations.approved || []).filter(a => a.fromBlockId === blockId || a.toBlockId === blockId);
 
       // Seletor de blocos rápidos para navegar sem fechar o modal
       const blockOptions = (state.blocks || []).map(blk => {
@@ -9955,7 +10797,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         return `<option value="${blk.id}" ${blk.id === blockId ? 'selected' : ''}>${lbl} (${blk.orig} · ${blk.cia})</option>`;
       }).join('');
 
-      // Banner de cruzamento entre destinos específico deste bloco
+      // Banner de cruzamento entre destinos específico deste bloco (com botões Aprovar, Alterar/Manual e Ignorar)
       let crossHtml = '';
       if (blockCross.length > 0) {
         const cards = blockCross.map(s => {
@@ -9975,15 +10817,27 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           `).join(' ');
 
           return `
-            <div class="p-3.5 rounded-xl bg-rose-50/90 dark:bg-rose-950/35 border border-rose-300 dark:border-rose-800 space-y-2">
+            <div class="p-3.5 rounded-xl bg-rose-50/90 dark:bg-rose-950/35 border border-rose-300 dark:border-rose-800 space-y-2.5">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <span class="px-2 py-0.5 rounded-full bg-rose-600 text-white font-extrabold text-[10px]">🔗 ${s.confidence}% Confiança</span>
-                  <span class="font-extrabold text-xs text-rose-950 dark:text-rose-200">Possível Pesagem Cruzada entre ${s.fromDestLabel} ↔ ${s.toDestLabel}</span>
+                  <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-800 dark:text-amber-300 font-extrabold text-[10px]">⏳ Aguardando Aprovação</span>
+                  <span class="font-extrabold text-xs text-rose-950 dark:text-rose-200">Sugestão de Cruzamento: ${s.fromDestLabel} ↔ ${s.toDestLabel}</span>
                 </div>
-                <button type="button" onclick="openPesosChronologyModal('${partnerBlockId}')" class="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-[11px]">
-                  Inspecionar ${partnerLabel} →
-                </button>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button type="button" onclick="approveCrossDestinationSuggestion('${s.id}')" class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-[11px] shadow-2xs">
+                    ✓ Aprovar Cruzamento
+                  </button>
+                  <button type="button" onclick="openManualCrossReconciliationModal('${s.fromBlockId}', '${s.toBlockId}', ${s.matchedVol}, ${s.fromExcessKg}, '${s.fromAppTime}', '${s.id}')" class="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px]">
+                    ⇄ Alterar / Cruzar Outro
+                  </button>
+                  <button type="button" onclick="ignoreCrossDestinationSuggestion('${s.id}')" class="px-2.5 py-1 rounded-lg bg-slate-200 hover:bg-rose-600 hover:text-white dark:bg-slate-800 dark:hover:bg-rose-600 text-slate-700 dark:text-slate-200 font-bold text-[11px] transition">
+                    ✕ Ignorar
+                  </button>
+                  <button type="button" onclick="openPesosChronologyModal('${partnerBlockId}')" class="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-bold text-[11px]">
+                    Ver ${partnerLabel} →
+                  </button>
+                </div>
               </div>
               <div class="text-xs text-slate-700 dark:text-slate-200">${headline}</div>
               <div class="flex flex-wrap items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
@@ -10000,13 +10854,33 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         crossHtml = `<div class="space-y-2">${cards}</div>`;
       }
 
+      if (approvedHere.length > 0) {
+        crossHtml += `
+          <div class="p-3 rounded-xl bg-emerald-50/80 dark:bg-emerald-950/25 border border-emerald-300 dark:border-emerald-800/70 space-y-1.5">
+            <div class="text-[11px] font-extrabold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+              ✓ Cruzamentos entre Destinos Aprovados neste Bloco (${approvedHere.length})
+            </div>
+            ${approvedHere.map(ap => `
+              <div class="flex flex-wrap items-center justify-between gap-2 text-xs bg-white/80 dark:bg-slate-900/70 px-3 py-1.5 rounded-lg border border-emerald-200 dark:border-emerald-800/50">
+                <span>
+                  <b>${ap.vol} vol (${ap.kg.toFixed(1)} kg)</b> às <b>${ap.fromTime}</b> movidos de <b>${ap.fromDestLabel}</b> para <b>${ap.toDestLabel}</b>
+                  <span class="text-[10px] text-slate-400 ml-1">(${ap.isManual ? 'Cruzamento Manual' : 'Sugestão Aprovada'} · ${ap.approvedAt})</span>
+                </span>
+                <button type="button" onclick="revertApprovedCrossReconciliation('${ap.id}')" class="px-2 py-0.5 rounded bg-rose-500/10 hover:bg-rose-500 text-rose-600 hover:text-white dark:text-rose-400 font-bold text-[10px] transition">
+                  ↺ Desfazer
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }
+
       // Filtra faixas de horário conforme modo selecionado
       const visibleSlots = pesosChronoState.filterMode === 'DIVERGENTES'
         ? analysis.slots.filter(s => s.isDivergent)
         : analysis.slots;
 
-      // Renderiza o espelho lado a lado no formato exato solicitado pelo usuário:
-      // Sistema (1 vol / 20:09 repetido por AWB com hover) vs App (3 vol / 20:09 com peso)
+      // Renderiza o espelho lado a lado: Sistema vs App (conciliações dentro do mesmo destino são automáticas; divergências permitem cruzar manualmente com outro destino)
       let timelineRowsHtml = '';
       if (visibleSlots.length === 0) {
         timelineRowsHtml = `
@@ -10032,6 +10906,19 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           } else if (sl.status === 'SYNTHETIC_SUMMARY') {
             rowBorder = 'border-slate-300 dark:border-slate-700 bg-slate-50/60 dark:bg-slate-800/40';
             badgeTone = 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300';
+          }
+
+          let manualCrossSlotBtn = '';
+          if (sl.isDivergent && sl.status !== 'SYNTHETIC_SUMMARY') {
+            if (sl.appVol > sl.sysVol) {
+              const exVol = sl.appVol - sl.sysVol;
+              const exKg = sl.sysVol === 0 ? sl.appKg : Math.max(0.5, Math.round((sl.appKg - sl.sysKg) * 100) / 100);
+              manualCrossSlotBtn = `<button type="button" onclick="openManualCrossReconciliationModal('${blockId}', '', ${exVol}, ${exKg}, '${sl.appTime}')" class="px-2.5 py-0.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px]">⇄ Mover +${exVol} vol p/ Outro Destino</button>`;
+            } else if (sl.sysVol > sl.appVol) {
+              const misVol = sl.sysVol - sl.appVol;
+              const misKg = sl.appVol === 0 ? sl.sysKg : Math.max(0.5, Math.round((sl.sysKg - sl.appKg) * 100) / 100);
+              manualCrossSlotBtn = `<button type="button" onclick="openManualCrossReconciliationModal('', '${blockId}', ${misVol}, ${misKg}, '${sl.sysTime}')" class="px-2.5 py-0.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[10px]">⇄ Puxar ${misVol} vol de Outro Destino</button>`;
+            }
           }
 
           // Coluna Esquerda: SISTEMA (cada AWB individual como "1 vol / HH:MM", com hover rico mostrando AWB e detalhes)
@@ -10089,7 +10976,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
                   </div>
                   <div class="text-right">
                     <div class="font-mono font-bold text-xs text-indigo-700 dark:text-indigo-300">${entry.kg.toFixed(2)} kg</div>
-                    <div class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">${entry.cat}${entry.awb ? ' · AWB ' + entry.awb.slice(-4) : ''}</div>
+                    <div class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">${entry.cat}${entry.awb ? ' · AWB ' + entry.awb.slice(-4) : ''}${entry.reconciledFrom ? ` · Movido de ${entry.reconciledFrom}` : ''}</div>
                   </div>
                 </div>
               `).join('')
@@ -10110,7 +10997,10 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
                     App: <b>${sl.appVol} vol</b> (${sl.appKg.toFixed(1)} kg Balança)
                   </span>
                 </div>
-                <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${badgeTone}">${sl.statusLabel}</span>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  ${manualCrossSlotBtn}
+                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold ${badgeTone}">${sl.statusLabel}</span>
+                </div>
               </div>
 
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 items-start">
@@ -10266,26 +11156,66 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       `;
     }
 
-    // Modal Global de Diagnóstico & Cruzamento de Horários entre Destinos
+    // Modal Global de Diagnóstico & Cruzamento de Horários entre Destinos (Sem simulação fictícia; com Aprovar, Ignorar e Cruzamento Manual)
     function openGlobalCrossDestinationModal() {
+      ensureCrossReconciliationsState();
       const tol = pesosChronoState.toleranceMins;
       const suggestions = findCrossDestinationSuggestions(tol);
+      const approvedList = state.crossReconciliations.approved || [];
+      const ignoredCount = (state.crossReconciliations.ignoredIds || []).length;
+
+      let approvedSectionHtml = '';
+      if (approvedList.length > 0) {
+        approvedSectionHtml = `
+          <div class="p-4 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-300 dark:border-emerald-800/70 space-y-2">
+            <div class="text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+              ✓ Cruzamentos entre Destinos Aprovados (${approvedList.length})
+            </div>
+            <div class="space-y-1.5">
+              ${approvedList.map(ap => `
+                <div class="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-800/60 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div>
+                    <span class="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 font-bold text-[10px] mr-1.5">
+                      ${ap.isManual ? 'Manual' : 'Sugestão Aprovada'}
+                    </span>
+                    <b>${ap.vol} vol (${ap.kg.toFixed(1)} kg)</b> às <b>${ap.fromTime}</b> transferidos de
+                    <b class="text-rose-600 dark:text-rose-400">${ap.fromDestLabel}</b> para
+                    <b class="text-emerald-600 dark:text-emerald-400">${ap.toDestLabel}</b>
+                    <span class="text-[10px] text-slate-400 ml-1">(${ap.approvedAt})</span>
+                  </div>
+                  <button type="button" onclick="revertApprovedCrossReconciliation('${ap.id}')" class="px-2.5 py-1 rounded-lg bg-rose-500/10 hover:bg-rose-600 text-rose-600 hover:text-white dark:text-rose-400 font-bold text-[11px] transition">
+                    ↺ Desfazer
+                  </button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      }
 
       let contentHtml = '';
       if (suggestions.length === 0) {
         contentHtml = `
-          <div class="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-center space-y-3">
-            <div class="text-sm font-bold text-slate-700 dark:text-slate-200">
-              Nenhuma divergência cruzada entre destinos foi detectada no momento (Tolerância ±${tol} min).
+          <div id="globalCrossDestModalWrapper" class="space-y-4">
+            <div class="p-6 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div class="text-sm font-bold text-slate-700 dark:text-slate-200">
+                Nenhuma divergência cruzada pendente entre destinos no momento (Tolerância ±${tol} min).
+              </div>
+              <p class="text-xs text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
+                Quando houver sobra de volumes pesados no App em um destino no mesmo horário (±${tol} min) em que outro destino teve coleta no Sistema sem pesagem correspondente, o sistema listará aqui para você aprovar, ignorar ou ajustar manualmente.
+              </p>
+              <div class="pt-1 flex flex-wrap items-center justify-center gap-2">
+                <button type="button" onclick="openManualCrossReconciliationModal()" class="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-xs">
+                  ⇄ Realizar Cruzamento Manual entre Destinos
+                </button>
+                ${ignoredCount > 0 ? `
+                  <button type="button" onclick="restoreIgnoredCrossSuggestions()" class="px-3 py-2 rounded-xl bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs">
+                    ↺ Restaurar ${ignoredCount} sugestão(ões) ignorada(s)
+                  </button>
+                ` : ''}
+              </div>
             </div>
-            <p class="text-xs text-slate-500 dark:text-slate-400 max-w-xl mx-auto">
-              Quando houver uma sobra de volumes pesados no App em um destino no mesmo horário (±${tol} min) em que outro destino teve coleta no Sistema sem pesagem correspondente, o motor listará aqui as sugestões com percentual de confiança, peso comparativo e AWBs exatas.
-            </p>
-            <div class="pt-2">
-              <button type="button" onclick="simulateCrossDestinationExample()" class="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs shadow-xs">
-                🧪 Simular Exemplo Real (2 vol VIX ↔ MAO às 20:00 + Lote 3 vol às 20:09)
-              </button>
-            </div>
+            ${approvedSectionHtml}
           </div>
         `;
       } else {
@@ -10301,21 +11231,25 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           return `
             <div class="p-4 rounded-2xl bg-white dark:bg-slate-900 border-2 ${s.confidence >= 80 ? 'border-rose-500/60' : 'border-amber-500/50'} shadow-xs space-y-2.5">
               <div class="flex flex-wrap items-center justify-between gap-2">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <span class="px-2.5 py-0.5 rounded-full ${s.confidence >= 80 ? 'bg-rose-600 text-white' : 'bg-amber-500 text-slate-950'} font-extrabold text-xs">
                     #${idx + 1} · ${s.confidence}% de Confiança
                   </span>
+                  <span class="px-2 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-300 font-extrabold text-[10px]">⏳ Aguardando Aprovação</span>
                   <span class="font-extrabold text-sm text-slate-900 dark:text-white">
                     Sobra no App em <span class="text-rose-600 dark:text-rose-400">${s.fromDestLabel}</span> (${s.fromAppTime})
                     ↔ Falta no App em <span class="text-purple-600 dark:text-purple-400">${s.toDestLabel}</span> (${s.toSysTime})
                   </span>
                 </div>
-                <div class="flex items-center gap-1.5">
-                  <button type="button" onclick="openPesosChronologyModal('${s.fromBlockId}')" class="px-3 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 font-bold text-xs">
-                    Abrir ${s.fromDestLabel}
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button type="button" onclick="approveCrossDestinationSuggestion('${s.id}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-2xs">
+                    ✓ Aprovar Cruzamento
                   </button>
-                  <button type="button" onclick="openPesosChronologyModal('${s.toBlockId}')" class="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-bold text-xs">
-                    Abrir ${s.toDestLabel}
+                  <button type="button" onclick="openManualCrossReconciliationModal('${s.fromBlockId}', '${s.toBlockId}', ${s.matchedVol}, ${s.fromExcessKg}, '${s.fromAppTime}', '${s.id}')" class="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs">
+                    ⇄ Alterar / Cruzar Manual
+                  </button>
+                  <button type="button" onclick="ignoreCrossDestinationSuggestion('${s.id}')" class="px-3 py-1.5 rounded-lg bg-slate-200 hover:bg-rose-600 hover:text-white dark:bg-slate-800 dark:hover:bg-rose-600 text-slate-700 dark:text-slate-200 font-bold text-xs transition">
+                    ✕ Ignorar
                   </button>
                 </div>
               </div>
@@ -10347,9 +11281,19 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
                 </div>
               </div>
 
-              <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span class="font-bold text-slate-500">Evidências cruzadas:</span>
-                ${s.reasons.map(r => `<span class="px-2 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-300 font-semibold">✓ ${r}</span>`).join('')}
+              <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span class="font-bold text-slate-500">Evidências cruzadas:</span>
+                  ${s.reasons.map(r => `<span class="px-2 py-0.5 rounded bg-purple-500/10 text-purple-700 dark:text-purple-300 font-semibold">✓ ${r}</span>`).join('')}
+                </div>
+                <div class="flex items-center gap-1.5">
+                  <button type="button" onclick="openPesosChronologyModal('${s.fromBlockId}')" class="px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-700 dark:text-rose-300 font-bold text-[11px]">
+                    Ver ${s.fromDestLabel}
+                  </button>
+                  <button type="button" onclick="openPesosChronologyModal('${s.toBlockId}')" class="px-2.5 py-1 rounded-lg bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-bold text-[11px]">
+                    Ver ${s.toDestLabel}
+                  </button>
+                </div>
               </div>
 
               <div class="pt-1 flex flex-wrap items-center gap-1.5">
@@ -10361,16 +11305,24 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         }).join('');
 
         contentHtml = `
-          <div class="space-y-3">
-            <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+          <div id="globalCrossDestModalWrapper" class="space-y-3">
+            <div class="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800">
               <div class="text-xs text-slate-600 dark:text-slate-300">
-                Foram encontradas <b>${suggestions.length}</b> correlações de horário + volume + peso entre destinos com divergência.
+                Há <b>${suggestions.length}</b> sugestão(ões) de cruzamento entre destinos aguardando sua decisão.
               </div>
-              <button type="button" onclick="simulateCrossDestinationExample()" class="px-3 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 hover:bg-purple-600 hover:text-white text-slate-700 dark:text-slate-200 font-bold text-[11px] transition">
-                🧪 Testar Simulação VIX ↔ MAO (20:00)
-              </button>
+              <div class="flex items-center gap-2">
+                ${ignoredCount > 0 ? `
+                  <button type="button" onclick="restoreIgnoredCrossSuggestions()" class="px-2.5 py-1 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-[11px]">
+                    ↺ Restaurar Ignoradas (${ignoredCount})
+                  </button>
+                ` : ''}
+                <button type="button" onclick="openManualCrossReconciliationModal()" class="px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition">
+                  ⇄ Novo Cruzamento Manual
+                </button>
+              </div>
             </div>
             ${cards}
+            ${approvedSectionHtml}
           </div>
         `;
       }
@@ -10381,120 +11333,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         `<button type="button" onclick="hideChronoAwbTooltip(); closeModal();" class="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">Fechar</button>`,
         'max-w-5xl'
       );
-    }
-
-    // Simula nos dados atuais o cenário exato descrito pelo usuário:
-    // - Em VIXA: 1 vol às 20:00 conciliado, 3 vol às 20:09 (1+1+1 no Sistema ↔ 3 vol no App) conciliados, e +2 vol pesados às 20:00 no App sem coleta em VIXA
-    // - Em MAOA: 2 vol coletados às 20:00 no Sistema que não foram pesados em MAOA (ficando MAOA com -2 vol no App)
-    function simulateCrossDestinationExample() {
-      if (!state.awbTimes) state.awbTimes = {};
-      if (!state.pesosAppByBlock) state.pesosAppByBlock = {};
-      const consMap = new Map((state.cons || []).map(c => [c.cons, c]));
-
-      // Reconstrói pesagens sincronizadas fiéis para todos os blocos e injeta o caso de teste em VIXA e MAOA
-      for (const b of (state.blocks || [])) {
-        const analysis = buildBlockChronologyAnalysis(b.id, 2);
-        const isVix = b.id === 'VIXA';
-        const isMao = b.id === 'MAOA';
-
-        // Busca AWBs de caixa deste bloco no state.report
-        const blockBoxRows = (state.report || []).filter(r => {
-          const awb = String(r[0] || '');
-          const cons = String(r[1] || '');
-          if (!awb || state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) return false;
-          if (getCurrentBlockForAwb(awb, cons) !== b.id) return false;
-          const cObj = consMap.get(cons);
-          const isSaca = cObj ? cObj.tipo === 'SACA' : Boolean(String(r[2] || '').trim());
-          return !isSaca;
-        });
-
-        if (isVix && blockBoxRows.length >= 4) {
-          // Define horários de coleta das 4 primeiras caixas de VIXA: 1 vol às 20:00 e 3 vol às 20:09
-          const tList = ['20:00', '20:09', '20:09', '20:09'];
-          for (let i = 0; i < blockBoxRows.length; i++) {
-            const t = i < 4 ? tList[i] : (getAwbConsTime(blockBoxRows[i]) || '19:35');
-            blockBoxRows[i][11] = t;
-            state.awbTimes[String(blockBoxRows[i][0])] = t;
-          }
-        } else if (isMao && blockBoxRows.length >= 2) {
-          // Define 2 volumes coletados às 20:00 em MAOA (que não serão pesados em MAOA, pois foram pesados em VIXA por engano!)
-          for (let i = 0; i < blockBoxRows.length; i++) {
-            const t = i < 2 ? '20:00' : (getAwbConsTime(blockBoxRows[i]) || '19:44');
-            blockBoxRows[i][11] = t;
-            state.awbTimes[String(blockBoxRows[i][0])] = t;
-          }
-        }
-      }
-
-      // Recalcula logs do App para VIXA e MAOA refletindo o exemplo real
-      for (const b of (state.blocks || [])) {
-        const fresh = buildBlockChronologyAnalysis(b.id, 2);
-        const logs = [];
-        let caixasVol = 0, caixasKg = 0;
-
-        // Agrupa sysBoxItems por horário
-        const byTime = new Map();
-        for (const item of fresh.slots.flatMap(s => s.sysItems)) {
-          if (!byTime.has(item.time)) byTime.set(item.time, []);
-          byTime.get(item.time).push(item);
-        }
-
-        for (const [t, items] of byTime.entries()) {
-          if (b.id === 'MAOA' && t === '20:00') {
-            // Em MAOA às 20:00, os 2 primeiros volumes NÃO foram pesados em MAOA (foram pesados em VIXA)
-            const rest = items.slice(2);
-            if (rest.length > 0) {
-              const kg = Math.round(rest.reduce((a, x) => a + x.wt, 0) * 100) / 100;
-              logs.push({ id: `SIM_${b.id}_${t}`, time: t, mins: timeStrToMinutes(t), vol: rest.length, kg, cat: 'CAIXA', tipo: 'NORMAL', awb: '', destRaw: b.dest });
-              caixasVol += rest.length;
-              caixasKg += kg;
-            }
-            continue;
-          }
-          const kg = Math.round(items.reduce((a, x) => a + x.wt, 0) * 100) / 100;
-          logs.push({ id: `SIM_${b.id}_${t}`, time: t, mins: timeStrToMinutes(t), vol: items.length, kg, cat: 'CAIXA', tipo: 'NORMAL', awb: '', destRaw: b.dest });
-          caixasVol += items.length;
-          caixasKg += kg;
-        }
-
-        if (b.id === 'VIXA') {
-          // Adiciona em VIXA o lançamento extra de 2 vol às 20:00 (com o peso das 2 AWBs de MAO!)
-          const maoRows = (state.report || []).filter(r => getCurrentBlockForAwb(String(r[0]), String(r[1])) === 'MAOA' && getAwbConsTime(r) === '20:00').slice(0, 2);
-          const extraKg = maoRows.length > 0 ? Math.round(maoRows.reduce((a, r) => a + Number(r[5] || 10), 0) * 100) / 100 : 37.4;
-          logs.push({ id: 'SIM_VIXA_EXTRA_2000', time: '20:00', mins: timeStrToMinutes('20:00'), vol: 2, kg: extraKg, cat: 'CAIXA', tipo: 'NORMAL', awb: '', destRaw: 'VIXA' });
-          caixasVol += 2;
-          caixasKg += extraKg;
-        }
-
-        const sacasVol = fresh.totalSysSacasCount;
-        const sacasKg = Math.round(fresh.sacaGroups.reduce((a, s) => a + s.totalKg, 0) * 100) / 100;
-        if (sacasVol > 0) {
-          logs.push({ id: `SIM_SACA_${b.id}`, time: '21:35', mins: timeStrToMinutes('21:35'), vol: sacasVol, kg: sacasKg, cat: 'SACA', tipo: 'NORMAL', awb: '', destRaw: b.dest });
-        }
-
-        state.pesosAppByBlock[b.id] = {
-          caixasVol,
-          caixasKg: Math.round(caixasKg * 100) / 100,
-          sacasVol,
-          sacasKg,
-          deliveryVol: 0,
-          deliveryKg: 0,
-          comailVol: 0,
-          comailKg: 0,
-          dgVol: 0,
-          dgKg: 0,
-          palletVol: 0,
-          palletKg: 0,
-          totalVol: caixasVol + sacasVol,
-          totalKg: Math.round((caixasKg + sacasKg) * 100) / 100,
-          logs
-        };
-      }
-
-      saveCatalogAndState();
-      renderAll();
-      openPesosChronologyModal('VIXA');
-      showToast('🧪 Cenário simulado: VIXA (+2 vol às 20:00 e lote 3 vol às 20:09) ↔ MAOA (-2 vol às 20:00)!');
     }
 
     function openModal(title, bodyHtml, footerHtml, maxWidthClass = 'max-w-lg') {
