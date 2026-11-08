@@ -12027,6 +12027,10 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     // Itens 1, 3, 4, 5A, 7 e 8A
     // =========================================================================
 
+    function parseTimeToMinutes(tStr) {
+      return typeof timeStrToMinutes === "function" ? timeStrToMinutes(tStr) : null;
+    }
+
     // --- ITEM 3: IA NA SUGESTÃO AUTOMÁTICA DA CONS CORRETA NO PENDÊNCIAS REPORT ---
     function computeAiConsRecommendationForPendencia(p) {
       if (!p || !Array.isArray(state.cons) || state.cons.length === 0) return null;
