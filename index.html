@@ -12028,7 +12028,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     // =========================================================================
 
     function parseTimeToMinutes(tStr) {
-      return typeof timeStrToMinutes === "function" ? timeStrToMinutes(tStr) : null;
+      return typeof timeStrToMinutes === 'function' ? timeStrToMinutes(tStr) : null;
     }
 
     // --- ITEM 3: IA NA SUGESTÃO AUTOMÁTICA DA CONS CORRETA NO PENDÊNCIAS REPORT ---
@@ -12049,7 +12049,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       for (const r of (state.report || [])) {
         const cNum = String(r[1] || '');
         const aNum = String(r[0] || '');
-        const tStr = (state.awbTimes && state.awbTimes[aNum]) || '';
+        const tStr = (state.awbTimes && state.awbTimes[aNum]) || String(r[11] || '');
         const m = parseTimeToMinutes(tStr);
         if (cNum && m !== null) {
           if (!consTimeWindows[cNum]) consTimeWindows[cNum] = { min: m, max: m, count: 0 };
@@ -12130,7 +12130,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     function applyAiSuggestedConsDirectly(pendId, suggestedCons) {
       const sel = document.getElementById(`selFixCons_${pendId}`);
       if (sel) {
-        // Garante que a opção esteja presente e selecionada
         sel.innerHTML = buildPendenciaConsOptionsByIataHtml('', suggestedCons);
         sel.value = suggestedCons;
       }
@@ -12237,42 +12236,41 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       }
 
       // 4. Análise Combinatória (Subset-Sum / Knapsack) de AWBs para explicar divergência de peso ou volume
+      // Nota: Em state.report, r[5] é o peso em kg (effectiveWt)!
       const totalSysKg = (analysis.slots || []).reduce((acc, s) => acc + Number(s.sysKg || 0), 0) + (analysis.sacaGroups || []).reduce((acc, g) => acc + Number(g.totalKg || 0), 0);
       const totalAppKg = Number(b.peso || 0);
       const diffTotalVol = (Number(analysis.totalAppBoxDelivVol || 0) + Number(analysis.totalAppSacasCount || 0)) - (Number(analysis.totalSysBoxDelivVol || 0) + Number(analysis.totalSysSacasCount || 0));
       const absDeltaKg = Math.abs(totalAppKg - totalSysKg);
 
       if (diffTotalVol !== 0 || absDeltaKg >= 1.5) {
-        // Coleta todas as AWBs do destino (ativas + recusadas) para buscar combinação exata de peso
         const blockAwbs = [];
         for (const r of (state.report || [])) {
           const awb = String(r[0] || '').trim();
           const cons = String(r[1] || '').trim();
-          const wt = Number(r[4] || 0);
+          const wt = Number(r[5] || 0);
           if (!awb || wt <= 0) continue;
           if (getCurrentBlockForAwb(awb, cons) === blockId) {
             const isRefused = state.recusas.includes(awb);
-            const tStr = (state.awbTimes && state.awbTimes[awb]) || '—';
+            const tStr = getAwbConsTime(awb, r);
             blockAwbs.push({ awb, cons, wt, time: tStr, isRefused, recip: String(r[3] || '').slice(0, 22) });
           }
         }
 
         const targetKg = absDeltaKg;
         if (targetKg >= 0.5 && blockAwbs.length > 0) {
-          // Procura 1 AWB ou par de 2 AWBs cuja soma de peso DRE bata com absDeltaKg (tolerância <= 1.2 kg)
           let bestCombo = null;
           let bestErr = 999;
 
           for (let i = 0; i < blockAwbs.length; i++) {
             const err1 = Math.abs(blockAwbs[i].wt - targetKg);
-            if (err1 <= 1.2 && err1 < bestErr) {
+            if (err1 <= 1.5 && err1 < bestErr) {
               bestErr = err1;
               bestCombo = [blockAwbs[i]];
             }
             for (let j = i + 1; j < Math.min(blockAwbs.length, 35); j++) {
               const sum2 = blockAwbs[i].wt + blockAwbs[j].wt;
               const err2 = Math.abs(sum2 - targetKg);
-              if (err2 <= 1.0 && err2 < bestErr) {
+              if (err2 <= 1.2 && err2 < bestErr) {
                 bestErr = err2;
                 bestCombo = [blockAwbs[i], blockAwbs[j]];
               }
@@ -12288,7 +12286,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               comboSum: Number(comboSum.toFixed(2)),
               awbs: bestCombo,
               explanation: direction === 'FALTA_NA_BALANCA'
-                ? `A balança tem ${absDeltaKg.toFixed(1)} kg a menos que o DRE, o que corresponde exatamente ao peso DRE de ${bestCombo.map(x => `AWB ${x.awb} (${x.wt.toFixed(1)} kg · ${x.time})`).join(' + ')}${bestCombo.some(x => x.isRefused) ? ' [já marcada como Recusa]' : ' — verifique se este volume deixou de ser pesado ou foi recusado'}.`
+                ? `A balança tem ${absDeltaKg.toFixed(1)} kg a menos que o DRE, o que corresponde ao peso DRE de ${bestCombo.map(x => `AWB ${x.awb} (${x.wt.toFixed(1)} kg · ${x.time})`).join(' + ')}${bestCombo.some(x => x.isRefused) ? ' [já marcada como Recusa]' : ' — verifique se este volume deixou de ser pesado ou foi recusado'}.`
                 : `A balança tem +${absDeltaKg.toFixed(1)} kg acima do DRE, equivalente ao peso de ${bestCombo.map(x => `AWB ${x.awb} (${x.wt.toFixed(1)} kg · ${x.time})`).join(' + ')} (possível repesagem do mesmo volume).`
             });
           }
@@ -12514,35 +12512,108 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const cte = state.ctes && state.ctes[blockId];
       if (!b || !cte) return;
       if (!state.novosLacres) state.novosLacres = {};
-      if (consNum) {
+      if (consNum && newSeal) {
         state.novosLacres[consNum] = normalizeSeal6(newSeal);
-      } else {
+      } else if (newSeal) {
         const cteSeals = (cte.lacres || []).map(normalizeSeal6).filter(Boolean);
         applyCteSealsToBlockSystem(blockId, cteSeals);
       }
-      cte.sealResolution = 'USE_CTE';
+      cte.sealResolution = newSeal ? 'USE_CTE' : 'IGNORE_CTE';
       evaluateBlockStatusAndCte(b, true);
       saveCatalogAndState();
       renderAll();
-      showToast(`✅ Novo lacre ${normalizeSeal6(newSeal)} lançado na CONS ${consNum || ''} e bloco revalidado!`);
+      showToast(`✅ Lacre atualizado no bloco ${exportDestNameForMinutaWeb(b.id, b.dest)} e revalidado!`);
     }
 
-    function applyAiRecommendedRefusalFromCte(blockId, awbToRefuse) {
-      const cleanAwb = String(awbToRefuse || '').trim();
-      if (!cleanAwb) return;
-      if (!state.recusas.includes(cleanAwb)) {
-        state.recusas.push(cleanAwb);
+    function applyAiRecommendedRefusalFromCte(blockId, awbToRefuse, optionalConsToSwapSeal = '', optionalNewSeal = '') {
+      const cleanAwbs = String(awbToRefuse || '').split(',').map(x => x.trim()).filter(Boolean);
+      if (cleanAwbs.length === 0) return;
+      for (const a of cleanAwbs) {
+        if (!state.recusas.includes(a)) {
+          state.recusas.push(a);
+        }
+      }
+      if (optionalConsToSwapSeal && optionalNewSeal) {
+        if (!state.novosLacres) state.novosLacres = {};
+        state.novosLacres[optionalConsToSwapSeal] = normalizeSeal6(optionalNewSeal);
       }
       recalculateVolumesFromReport(false);
       const b = (state.blocks || []).find(x => x.id === blockId);
       const cte = state.ctes && state.ctes[blockId];
       if (b && cte && Number(cte.peso || 0) > 0) {
         b.peso = Math.round(Number(cte.peso) * 100) / 100;
+        if (optionalConsToSwapSeal && optionalNewSeal) {
+          cte.sealResolution = 'USE_CTE';
+        }
       }
       if (b) evaluateBlockStatusAndCte(b, true);
       saveCatalogAndState();
       renderAll();
-      showToast(`🚫 AWB ${cleanAwb} marcada como RECUSADA pela análise do CT-e e bloco atualizado!`);
+      showToast(`🚫 AWB(s) ${cleanAwbs.join(', ')} marcada(s) como RECUSA${optionalNewSeal ? ' + Novo Lacre ' + normalizeSeal6(optionalNewSeal) + ' aplicado' : ''} e bloco atualizado!`);
+    }
+
+    // Associa cada AWB ativa do bloco ao seu peso real da balança (se houver casamento por horário de coleta) além do peso DRE (r[5])
+    function getBlockActiveAwbsEnrichedWithScaleWeight(blockId, consItems) {
+      const activeRows = (state.report || []).filter(r => {
+        const awb = String(r[0] || '');
+        const cons = String(r[1] || '');
+        if (!awb || state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) return false;
+        return getCurrentBlockForAwb(awb, cons) === blockId;
+      });
+
+      // Mapeia logs de pesagem do App neste bloco por horário para saber quanto cada caixa pesou de verdade na balança
+      const appStat = (state.pesosAppByBlock && state.pesosAppByBlock[blockId]) || null;
+      const appBoxLogs = (appStat && Array.isArray(appStat.logs))
+        ? appStat.logs.filter(l => l.cat !== 'SACA' && Number(l.vol || 1) === 1 && Number(l.kg || 0) > 0)
+        : [];
+
+      return activeRows.map(r => {
+        const awb = String(r[0] || '');
+        const cons = String(r[1] || '');
+        const recip = String(r[3] || '').trim();
+        const city = String(r[4] || '').trim();
+        const dreKg = Number(r[5] || 0); // Coluna 5 é o peso DRE em kg!
+        const brl = Number(r[10] || 0);
+        const timeStr = getAwbConsTime(awb, r);
+        const awbMins = parseTimeToMinutes(timeStr);
+        const cObj = (consItems || []).find(c => c.cons === cons);
+        const tipoCons = cObj ? (cObj.source === 'DELIVERY' ? 'DELIVERY' : cObj.tipo) : 'CAIXAS';
+        const isSaca = (tipoCons === 'SACA');
+        const isDg = state.dgs.includes(awb);
+
+        // Procura se existe lançamento na balança no mesmo horário (±3 min)
+        let scaleKg = null;
+        if (!isSaca && awbMins !== null && appBoxLogs.length > 0) {
+          let bestLog = null;
+          let bestDiff = 999;
+          for (const lg of appBoxLogs) {
+            const lm = lg.mins !== null && lg.mins !== undefined ? lg.mins : parseTimeToMinutes(lg.time);
+            if (lm !== null) {
+              const d = Math.abs(lm - awbMins);
+              if (d <= 3 && d < bestDiff) {
+                bestDiff = d;
+                bestLog = lg;
+              }
+            }
+          }
+          if (bestLog) scaleKg = Number(bestLog.kg);
+        }
+
+        return {
+          awb,
+          cons,
+          recip,
+          city,
+          dreKg,
+          scaleKg,
+          effectiveCompareKg: scaleKg !== null ? scaleKg : dreKg,
+          brl,
+          timeStr,
+          tipoCons,
+          isSaca,
+          isDg
+        };
+      });
     }
 
     function buildAiCteDiagnosticHtmlForBlock(b, evalInfo) {
@@ -12552,15 +12623,28 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const { consItems, dgAwbs, palletAwbs = [] } = getBlockConsAndSeals(b.id);
       const insights = [];
 
-      // 1. Diagnóstico Inteligente de Divergência de Lacres (Ex: 3 lacres em BSB, 1 mudou após recusa de AWB dentro de Saca)
-      const hasSealDisc = (evalInfo.discrepancies || []).some(d => d.field === 'Lacres');
-      if (hasSealDisc) {
-        const blockSeals = getActiveSealsForBlock(b.id);
-        const cteSeals = (cte.lacres || []).map(normalizeSeal6).filter(Boolean);
-        const missingSeals = blockSeals.filter(s => !cteSeals.includes(s));
-        const extraSeals = cteSeals.filter(s => !blockSeals.includes(s));
+      const sysVol = Number(b.vol || 0);
+      const cteVol = Number(cte.vol || 0);
+      const deltaVol = sysVol - cteVol; // > 0 = sistema tem mais volumes que o CT-e (faltou embarcar / houve recusa)
+      const sysPeso = Number(b.peso || 0);
+      const ctePeso = Number(cte.peso || 0);
+      const deltaPeso = Math.round((sysPeso - ctePeso) * 100) / 100;
+      const sysValBrl = getBlockValorTotalBrl(b.id);
+      const cteValBrl = Number(cte.vCarga || 0);
+      const deltaValBrl = cteValBrl > 0 ? Math.round((sysValBrl - cteValBrl) * 100) / 100 : 0;
 
-        // Verifica quais AWBs deste destino foram recusadas ou cortadas e pertenciam a uma SACA
+      const blockSeals = getActiveSealsForBlock(b.id);
+      const cteSeals = (cte.lacres || []).map(normalizeSeal6).filter(Boolean);
+      const missingSeals = blockSeals.filter(s => !cteSeals.includes(s));
+      const extraSeals = cteSeals.filter(s => !blockSeals.includes(s));
+      const hasSealDisc = (evalInfo.discrepancies || []).some(d => d.field === 'Lacres');
+
+      const enrichedAwbs = getBlockActiveAwbsEnrichedWithScaleWeight(b.id, consItems);
+
+      // =======================================================================
+      // 1. DIAGNÓSTICO IA DE LACRES (Troca de Lacre em Saca c/ ou s/ Recusa Lançada, ou Lacre Ausente no CT-e)
+      // =======================================================================
+      if (hasSealDisc) {
         const refusedSacaRows = (state.report || []).filter(r => {
           const awb = String(r[0] || '');
           const cons = String(r[1] || '');
@@ -12570,52 +12654,113 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           return Boolean(cObj && cObj.tipo === 'SACA');
         });
 
-        if (missingSeals.length === 1 && extraSeals.length === 1) {
+        // Caso 1A: Veio um lacre diferente no CT-e (ex: 3 lacres em BSB, 1 mudou no XML)
+        if (missingSeals.length >= 1 && extraSeals.length >= 1) {
           const oldSeal = missingSeals[0];
           const newSeal = extraSeals[0];
           const targetConsObj = consItems.find(c => ((state.lacres && state.lacres[c.cons]) || []).map(normalizeSeal6).includes(oldSeal)) || consItems.find(c => c.tipo === 'SACA');
           const targetConsNum = targetConsObj ? targetConsObj.cons : '';
-          const refusedAwbTxt = refusedSacaRows.length > 0
-            ? `Como houve recusa da AWB <b>${refusedSacaRows.map(r => r[0]).join(', ')}</b> dentro da saca${targetConsNum ? ' (CONS ' + targetConsNum.slice(-4) + ')' : ''}, a saca foi reaberta e relacrada na pista`
-            : `Dos ${blockSeals.length} lacre(s) do bloco, apenas 1 mudou (<b>${oldSeal}</b> → <b>${newSeal}</b>), indicando provável troca de lacre em saca${targetConsNum ? ' (CONS ' + targetConsNum.slice(-4) + ')' : ''} não lançada no sistema`;
+
+          // Se o operador AINDA NÃO lançou recusa, mas o peso caiu (deltaPeso > 0), procura dentro dessa SACA qual AWB tem peso compatível com a diferença!
+          let sacaForgottenCandidate = null;
+          if (refusedSacaRows.length === 0 && deltaPeso > 0.2) {
+            const awbsInChangedSaca = enrichedAwbs.filter(x => targetConsNum ? x.cons === targetConsNum : x.isSaca);
+            awbsInChangedSaca.sort((a, bCand) => Math.abs(a.dreKg - deltaPeso) - Math.abs(bCand.dreKg - deltaPeso));
+            if (awbsInChangedSaca.length > 0 && Math.abs(awbsInChangedSaca[0].dreKg - deltaPeso) <= Math.max(2.5, deltaPeso * 0.5)) {
+              sacaForgottenCandidate = awbsInChangedSaca[0];
+            }
+          }
+
+          if (refusedSacaRows.length > 0) {
+            insights.push(`
+              <div class="p-2.5 rounded-lg bg-amber-950/95 text-amber-100 border border-amber-400/70 space-y-1.5">
+                <div class="flex items-center justify-between gap-1 flex-wrap">
+                  <span class="font-extrabold text-[10px] text-amber-300 uppercase">🤖 IA • Troca de Lacre por Recusa em Saca</span>
+                  <button type="button" onclick="applyAiSealSwapForCons('${b.id}', '${targetConsNum}', '${newSeal}')"
+                    class="px-2.5 py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[10px] shadow-2xs">
+                    🔄 Trocar Lacre (${oldSeal} → ${newSeal})
+                  </button>
+                </div>
+                <p class="text-[10px] leading-snug">
+                  Houve recusa da AWB <b>${refusedSacaRows.map(r => r[0]).join(', ')}</b> dentro da saca${targetConsNum ? ' (CONS ' + targetConsNum.slice(-4) + ')' : ''}. A saca foi reaberta e relacrada com <b>${newSeal}</b> (substituindo <b>${oldSeal}</b>).
+                </p>
+              </div>
+            `);
+          } else if (sacaForgottenCandidate) {
+            insights.push(`
+              <div class="p-2.5 rounded-lg bg-rose-950/95 text-rose-100 border border-rose-400/70 space-y-1.5">
+                <div class="flex items-center justify-between gap-1 flex-wrap">
+                  <span class="font-extrabold text-[10px] text-rose-300 uppercase">🤖 IA • Troca de Lacre + Recusa na Saca Detectada</span>
+                  <div class="flex items-center gap-1">
+                    <button type="button" onclick="applyAiRecommendedRefusalFromCte('${b.id}', '${sacaForgottenCandidate.awb}', '${targetConsNum}', '${newSeal}')"
+                      class="px-2 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-[10px] shadow-2xs">
+                      🚫 Recusar ${sacaForgottenCandidate.awb} + Lacre ${newSeal}
+                    </button>
+                    <button type="button" onclick="applyAiSealSwapForCons('${b.id}', '${targetConsNum}', '${newSeal}')"
+                      class="px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[10px]">
+                      Só Trocar Lacre
+                    </button>
+                  </div>
+                </div>
+                <p class="text-[10px] leading-snug">
+                  O lacre <b>${oldSeal}</b> mudou para <b>${newSeal}</b> na CT-e e o peso caiu <b>-${deltaPeso.toFixed(1)} kg</b>: a <b>AWB ${sacaForgottenCandidate.awb} (${sacaForgottenCandidate.dreKg.toFixed(1)} kg DRE)</b> de dentro da saca (CONS ${targetConsNum.slice(-4)}) provavelmente foi recusada, gerando a troca do lacre!
+                </p>
+              </div>
+            `);
+          } else {
+            insights.push(`
+              <div class="p-2.5 rounded-lg bg-amber-950/95 text-amber-100 border border-amber-400/70 space-y-1.5">
+                <div class="flex items-center justify-between gap-1 flex-wrap">
+                  <span class="font-extrabold text-[10px] text-amber-300 uppercase">🤖 IA • Sugestão de Troca de Lacre</span>
+                  <button type="button" onclick="applyAiSealSwapForCons('${b.id}', '${targetConsNum}', '${newSeal}')"
+                    class="px-2.5 py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[10px] shadow-2xs">
+                    🔄 Atualizar Lacre (${oldSeal} → ${newSeal})
+                  </button>
+                </div>
+                <p class="text-[10px] leading-snug">
+                  O lacre <b>${oldSeal}</b>${targetConsNum ? ' (CONS ' + targetConsNum.slice(-4) + ')' : ''} foi substituído por <b>${newSeal}</b> no CT-e. Clique acima para lançar o novo lacre no sistema.
+                </p>
+              </div>
+            `);
+          }
+        } else if (missingSeals.length >= 1 && extraSeals.length === 0) {
+          // Caso 1B: O sistema tem lacre (ex: 032255 em JPA via REC) mas o CT-e veio "S/ Lacre"
+          const missingSeal = missingSeals[0];
+          const sacaConsObj = consItems.find(c => ((state.lacres && state.lacres[c.cons]) || []).map(normalizeSeal6).includes(missingSeal)) || consItems.find(c => c.tipo === 'SACA');
+          const sacaAwbs = sacaConsObj ? enrichedAwbs.filter(x => x.cons === sacaConsObj.cons) : [];
+          const sacaDreTotalKg = sacaAwbs.reduce((acc, x) => acc + x.dreKg, 0);
 
           insights.push(`
-            <div class="p-2 rounded-lg bg-amber-950/90 text-amber-100 border border-amber-400/60 space-y-1">
-              <div class="flex items-center justify-between gap-1">
-                <span class="font-extrabold text-[10px] text-amber-300 uppercase">🤖 IA • Troca de Lacre Detectada</span>
-                <button type="button" onclick="applyAiSealSwapForCons('${b.id}', '${targetConsNum}', '${newSeal}')"
+            <div class="p-2.5 rounded-lg bg-amber-950/95 text-amber-100 border border-amber-400/70 space-y-1.5">
+              <div class="flex items-center justify-between gap-1 flex-wrap">
+                <span class="font-extrabold text-[10px] text-amber-300 uppercase">🤖 IA • Análise de Lacre Ausente na CT-e (${missingSeal})</span>
+                <button type="button" onclick="resolveBlockSealDiscrepancy('${b.id}', 'IGNORE_CTE')"
                   class="px-2 py-0.5 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[10px]">
-                  🔄 Lançar Novo Lacre (${newSeal})
+                  ✓ Manter Lacre ${missingSeal}
                 </button>
               </div>
-              <p class="text-[10px] leading-snug">${refusedAwbTxt}: de <b>${oldSeal}</b> para <b>${newSeal}</b>.</p>
+              <p class="text-[10px] leading-snug">
+                O CT-e não trouxe o lacre <b>${missingSeal}</b> digitado na observação.
+                ${deltaVol > 0 ? `Como também faltou <b>${deltaVol} vol (-${deltaPeso.toFixed(1)} kg)</b> na CT-e, verifique abaixo a AWB recomendada para recusa (ou se a Saca ${sacaConsObj ? sacaConsObj.cons.slice(-4) : ''} de ${sacaDreTotalKg.toFixed(1)} kg DRE ficou retida).` : 'A cia aérea apenas omitiu o número do lacre no XML.'}
+              </p>
             </div>
           `);
         }
       }
 
-      // 2. Diagnóstico de Divergência de Volumes e Peso + Detecção de Recusa Esquecida (Olhando TODAS as AWBs embarcadas do destino)
-      const sysVol = Number(b.vol || 0);
-      const cteVol = Number(cte.vol || 0);
-      const deltaVol = sysVol - cteVol; // > 0 significa que o sistema tem MAIS volumes que o CT-e (faltou embarcar / houve recusa)
-      const sysPeso = Number(b.peso || 0);
-      const ctePeso = Number(cte.peso || 0);
-      const deltaPeso = Math.round((sysPeso - ctePeso) * 100) / 100;
-      const sysValBrl = getBlockValorTotalBrl(b.id);
-      const cteValBrl = Number(cte.vCarga || 0);
-      const deltaValBrl = cteValBrl > 0 ? Math.round((sysValBrl - cteValBrl) * 100) / 100 : 0;
-
-      // Verifica se já houve recusas lançadas que explicam a diferença de peso
+      // =======================================================================
+      // 2. DIAGNÓSTICO DE PESO DE RECUSA JÁ LANÇADA OU COMAIL / DG
+      // =======================================================================
       const refusedAllInBlock = (state.report || []).filter(r => {
         const awb = String(r[0] || '');
         const cons = String(r[1] || '');
         return (state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) && getCurrentBlockForAwb(awb, cons) === b.id;
       });
       if (refusedAllInBlock.length > 0 && Math.abs(deltaPeso) >= 0.5) {
-        const refusedDreKg = refusedAllInBlock.reduce((acc, r) => acc + Number(r[4] || 0), 0);
-        if (Math.abs(deltaPeso - refusedDreKg) <= 2.0) {
+        const refusedDreKg = refusedAllInBlock.reduce((acc, r) => acc + Number(r[5] || 0), 0);
+        if (Math.abs(deltaPeso - refusedDreKg) <= 2.5) {
           insights.push(`
-            <div class="p-2 rounded-lg bg-amber-950/90 text-amber-100 border border-amber-400/60 space-y-1">
+            <div class="p-2.5 rounded-lg bg-amber-950/95 text-amber-100 border border-amber-400/70 space-y-1">
               <div class="flex items-center justify-between gap-1">
                 <span class="font-extrabold text-[10px] text-amber-300 uppercase">🤖 IA • Peso da Recusa no Bloco</span>
                 <button type="button" onclick="const blk=state.blocks.find(x=>x.id==='${b.id}'); if(blk){blk.peso=${ctePeso}; evaluateBlockStatusAndCte(blk,true); saveCatalogAndState(); renderAll(); showToast('Peso ajustado para ${ctePeso} kg!');}"
@@ -12631,90 +12776,143 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         }
       }
 
-      // Verifica se a diferença de volumes é explicada por DG, Pallet ou Comail
-      if (deltaVol !== 0) {
-        const comailVol = Number((state.comail && state.comail[b.id]) || 0);
-        if (comailVol > 0 && Math.abs(deltaVol) === comailVol) {
-          insights.push(`
-            <div class="p-2 rounded-lg bg-amber-950/90 text-amber-100 border border-amber-400/60 text-[10px]">
-              <b class="text-amber-300">🤖 IA • Volume COMAIL:</b> A diferença de <b>${Math.abs(deltaVol)} vol</b> corresponde exatamente ao <b>COMAIL (+${comailVol} vol)</b> lançado neste destino.
-            </div>
-          `);
-        } else if (dgAwbs.length > 0 && Math.abs(deltaVol) === dgAwbs.length) {
-          insights.push(`
-            <div class="p-2 rounded-lg bg-amber-950/90 text-amber-100 border border-amber-400/60 text-[10px]">
-              <b class="text-amber-300">🤖 IA • Carga DG (${dgAwbs.length} vol):</b> A diferença de volume corresponde à(s) AWB(s) DG (<b>${dgAwbs.join(', ')}</b>) — verifique se a DG embarcou separada ou foi recusada na cia aérea.
-            </div>
-          `);
-        }
-      }
+      // =======================================================================
+      // 3. RECOMENDAÇÃO INTELIGENTE DE RECUSA ESQUECIDA (Inspeciona todas as AWBs embarcadas do destino)
+      // =======================================================================
+      if ((deltaVol > 0 || deltaPeso >= 1.0) && enrichedAwbs.length > 0) {
+        // Se os lacres das sacas bateram 100% com o CT-e (sem divergência de lacre), sabemos que as SACAS embarcaram fechadas!
+        // Portanto, se faltou volume físico (deltaVol > 0), o volume recusado obrigatoriamente é uma CAIXA solta (não SACA)!
+        const sealsMatchedCompletely = !hasSealDisc && blockSeals.length > 0;
+        const boxCandidates = enrichedAwbs.filter(x => !x.isSaca);
+        const poolToSearch = (deltaVol > 0 && boxCandidates.length > 0 && (sealsMatchedCompletely || missingSeals.length === 0))
+          ? boxCandidates
+          : enrichedAwbs;
 
-      // Detecção Inteligente de Recusa Esquecida: inspeciona TODAS as AWBs ativas ("Embarcadas") do bloco quando o CT-e veio com menos volumes ou menos peso
-      if (deltaVol > 0 || deltaPeso >= 1.0) {
-        const activeRows = (state.report || []).filter(r => {
-          const awb = String(r[0] || '');
-          const cons = String(r[1] || '');
-          if (!awb || state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) return false;
-          return getCurrentBlockForAwb(awb, cons) === b.id;
-        });
-
+        // 3.1 Caso faltou 1 volume (deltaVol === 1) ou caiu o peso: pontua cada AWB candidata pelo casamento de Peso (Balança e DRE), Valor e <idDocAnt>
         const scoredCandidates = [];
-        for (const r of activeRows) {
-          const awb = String(r[0] || '');
-          const cons = String(r[1] || '');
-          const wt = Number(r[4] || 0);
-          const brl = Number(r[10] || 0);
-          const cObj = consItems.find(c => c.cons === cons);
-          const isBox = !cObj || cObj.tipo === 'CAIXAS';
-          const isDg = state.dgs.includes(awb);
-
-          let score = 0;
+        for (const item of poolToSearch) {
+          let score = 25;
           const reasons = [];
 
-          // Se <idDocAnt> veio no XML e esta AWB está ausente
-          if (Array.isArray(evalInfo.missingInCteAwbs) && evalInfo.missingInCteAwbs.includes(awb)) {
-            score += 65;
+          // Critério A: Ausente no <idDocAnt> do XML (quando presente)
+          if (Array.isArray(evalInfo.missingInCteAwbs) && evalInfo.missingInCteAwbs.includes(item.awb)) {
+            score += 60;
             reasons.push('Ausente no <idDocAnt> do XML');
           }
-          // Se o peso DRE da AWB bate com a queda de peso do CT-e
-          if (deltaPeso > 0 && wt > 0 && Math.abs(wt - deltaPeso) <= 1.8) {
-            score += 45;
-            reasons.push(`Peso DRE (${wt.toFixed(1)} kg) bate com a diferença de -${deltaPeso.toFixed(1)} kg na CT-e`);
-          }
-          // Se o valor declarado em BRL bate com a queda de <vCarga> do CT-e
-          if (deltaValBrl > 5 && brl > 1 && Math.abs(brl - deltaValBrl) <= 20) {
-            score += 35;
-            reasons.push(`Valor R$ ${brl.toFixed(2)} bate com a diferença de vCarga na CT-e`);
-          }
-          // Se faltou 1 volume físico e a AWB é Caixa solta ou DG
-          if (deltaVol === 1 && isBox) {
-            score += 15;
-            reasons.push('Volume individual (Caixa)');
-          }
-          if (isDg) {
-            score += 12;
-            reasons.push('Carga DG (maior índice de retenção/recusa)');
+
+          // Critério B: Proximidade entre o Peso da AWB (na Balança ou no DRE) e a diferença de peso do CT-e (deltaPeso)
+          if (deltaPeso > 0) {
+            const diffScale = item.scaleKg !== null ? Math.abs(item.scaleKg - deltaPeso) : 999;
+            const diffDre = Math.abs(item.dreKg - deltaPeso);
+            const bestWtDiff = Math.min(diffScale, diffDre);
+            const usedKgLabel = diffScale <= diffDre && item.scaleKg !== null
+              ? `${item.scaleKg.toFixed(1)} kg na Balança (DRE ${item.dreKg.toFixed(1)} kg)`
+              : `${item.dreKg.toFixed(1)} kg no DRE`;
+
+            if (bestWtDiff <= 0.6) {
+              score += 55;
+              reasons.push(`Peso exato (${usedKgLabel}) = -${deltaPeso.toFixed(1)} kg da CT-e`);
+            } else if (bestWtDiff <= 1.8) {
+              score += 46;
+              reasons.push(`Peso compatível (${usedKgLabel} vs -${deltaPeso.toFixed(1)} kg na CT-e)`);
+            } else if (bestWtDiff <= 3.5 || (deltaPeso >= 12 && bestWtDiff <= deltaPeso * 0.22)) {
+              score += 36;
+              reasons.push(`Peso próximo (${usedKgLabel} vs -${deltaPeso.toFixed(1)} kg na CT-e)`);
+            } else {
+              // Penaliza proporcionalmente à distância do peso
+              score -= Math.min(20, Math.round(bestWtDiff * 1.5));
+            }
           }
 
-          if (score >= 40) {
-            scoredCandidates.push({ awb, wt, brl, score: Math.min(99, score), reasons });
+          // Critério C: Se faltou 1 volume físico no CT-e e os lacres de saca bateram, prioriza CAIXAS
+          if (deltaVol > 0 && !item.isSaca) {
+            score += 18;
+            reasons.push(`Volume individual (${item.tipoCons} CONS ${item.cons.slice(-4)})`);
+          }
+
+          // Critério D: Valor declarado em BRL próximo à diferença de <vCarga> do CT-e
+          if (deltaValBrl > 5 && item.brl > 1 && Math.abs(item.brl - deltaValBrl) <= Math.max(25, deltaValBrl * 0.15)) {
+            score += 25;
+            reasons.push(`Valor R$ ${item.brl.toFixed(2)} bate com diferença de vCarga`);
+          }
+
+          if (item.isDg) {
+            score += 10;
+            reasons.push('Carga DG');
+          }
+
+          scoredCandidates.push({
+            ...item,
+            bestWtDiff: deltaPeso > 0 ? Math.min(item.scaleKg !== null ? Math.abs(item.scaleKg - deltaPeso) : 999, Math.abs(item.dreKg - deltaPeso)) : 0,
+            score: Math.min(99, Math.max(10, score)),
+            reasons
+          });
+        }
+
+        // Ordena pelo maior score e, em caso de empate, pela menor diferença de peso em relação ao deltaPeso da CT-e
+        scoredCandidates.sort((a, bCand) => {
+          if (bCand.score !== a.score) return bCand.score - a.score;
+          return a.bestWtDiff - bCand.bestWtDiff;
+        });
+
+        // Se faltaram 2 volumes (deltaVol === 2), verifica também se a soma de 2 AWBs de CAIXAS bate exatamente com deltaPeso!
+        let bestPairCombo = null;
+        if (deltaVol === 2 && deltaPeso > 0 && poolToSearch.length >= 2) {
+          let bestPairErr = 999;
+          for (let i = 0; i < poolToSearch.length; i++) {
+            for (let j = i + 1; j < poolToSearch.length; j++) {
+              const w1 = poolToSearch[i]. effectiveCompareKg;
+              const w2 = poolToSearch[j].effectiveCompareKg;
+              const err = Math.abs((w1 + w2) - deltaPeso);
+              if (err <= 2.5 && err < bestPairErr) {
+                bestPairErr = err;
+                bestPairCombo = [poolToSearch[i], poolToSearch[j]];
+              }
+            }
           }
         }
 
-        scoredCandidates.sort((a, bCand) => bCand.score - a.score);
-        if (scoredCandidates.length > 0) {
-          const top = scoredCandidates[0];
+        if (bestPairCombo) {
+          const pairAwbsStr = bestPairCombo.map(x => x.awb).join(',');
+          const pairDesc = bestPairCombo.map(x => `<b>${x.awb}</b> (${x.dreKg.toFixed(1)}kg)`).join(' + ');
           insights.push(`
-            <div class="p-2 rounded-lg bg-rose-950/95 text-rose-100 border border-rose-400/70 space-y-1">
-              <div class="flex items-center justify-between gap-1">
-                <span class="font-extrabold text-[10px] text-rose-300 uppercase">🤖 IA • Possível Recusa Esquecida (${top.score}%)</span>
-                <button type="button" onclick="applyAiRecommendedRefusalFromCte('${b.id}', '${top.awb}')"
-                  class="px-2 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-[10px] shadow-2xs">
-                  🚫 Lançar Recusa ${top.awb}
+            <div class="p-2.5 rounded-lg bg-rose-950/95 text-rose-100 border border-rose-400/70 space-y-1.5">
+              <div class="flex items-center justify-between gap-1 flex-wrap">
+                <span class="font-extrabold text-[10px] text-rose-300 uppercase">🤖 IA • Recomendação de Recusa (2 Volumes = -${deltaPeso.toFixed(1)} kg)</span>
+                <button type="button" onclick="applyAiRecommendedRefusalFromCte('${b.id}', '${pairAwbsStr}')"
+                  class="px-2.5 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-extrabold text-[10px] shadow-2xs">
+                  🚫 Recusar 2 AWBs e Validar
                 </button>
               </div>
               <p class="text-[10px] leading-snug">
-                Olhando todas as ${activeRows.length} AWBs embarcadas deste destino, a <b>AWB ${top.awb}</b> (<b>${top.wt.toFixed(1)} kg</b> · R$ ${top.brl.toFixed(2)}) explica a divergência: ${top.reasons.join(' + ')}.
+                O CT-e veio com <b>-2 vol / -${deltaPeso.toFixed(1)} kg</b>. A combinação exata entre as AWBs embarcadas é ${pairDesc}.
+              </p>
+            </div>
+          `);
+        } else if (scoredCandidates.length > 0) {
+          const topCandidates = scoredCandidates.slice(0, 2).filter((c, idx) => idx === 0 || c.score >= scoredCandidates[0].score - 8);
+          const top = topCandidates[0];
+          const buttonsHtml = topCandidates.map(c => `
+            <button type="button" onclick="applyAiRecommendedRefusalFromCte('${b.id}', '${c.awb}')"
+              class="px-2 py-0.5 rounded bg-amber-400 hover:bg-amber-300 text-slate-950 font-mono font-extrabold text-[10px] shadow-2xs"
+              title="Marcar AWB ${c.awb} (${c.dreKg.toFixed(1)} kg DRE${c.scaleKg !== null ? ' / ' + c.scaleKg.toFixed(1) + ' kg Balança' : ''}) como RECUSADA e ajustar peso do bloco para ${ctePeso} kg">
+              🚫 Recusar ${c.awb} (${c.dreKg.toFixed(1)}kg)
+            </button>
+          `).join('');
+
+          const secondNote = topCandidates.length > 1
+            ? ` <span class="opacity-85">(ou <b>${topCandidates[1].awb}</b> de ${topCandidates[1].dreKg.toFixed(1)} kg)</span>`
+            : '';
+
+          insights.push(`
+            <div class="p-2.5 rounded-lg bg-rose-950/95 text-rose-100 border border-rose-400/70 space-y-1.5">
+              <div class="flex items-center justify-between gap-1 flex-wrap">
+                <span class="font-extrabold text-[10px] text-rose-300 uppercase">🤖 IA • Recomendação de Recusa (${top.score}% Confiança)</span>
+                <div class="flex flex-wrap items-center gap-1">${buttonsHtml}</div>
+              </div>
+              <p class="text-[10px] leading-snug">
+                Faltou <b>${deltaVol > 0 ? deltaVol + ' vol' : ''} (${deltaPeso > 0 ? '-' + deltaPeso.toFixed(1) + ' kg' : deltaPeso.toFixed(1) + ' kg'})</b> no CT-e${sealsMatchedCompletely ? ' e o(s) lacre(s) de Saca bateram 100% (logo a recusa foi em CAIXA)' : ''}.
+                Pela análise das AWBs embarcadas, a candidata é <b>AWB ${top.awb}</b> (<b>${top.dreKg.toFixed(1)} kg DRE</b>${top.scaleKg !== null ? ` · <b>${top.scaleKg.toFixed(1)} kg Balança</b>` : ''} · CONS ${top.cons.slice(-4)} · ${top.timeStr})${secondNote}.
               </p>
             </div>
           `);
@@ -12835,7 +13033,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       let combinedText = '';
       const pagePreviews = [];
 
-      // Lê as primeiras 3 páginas (Extrato CE + DANFE costumam estar nas páginas 1 e 2)
       const maxPagesToScan = Math.min(pdf.numPages, 3);
       for (let p = 1; p <= maxPagesToScan; p++) {
         const page = await pdf.getPage(p);
@@ -12843,7 +13040,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         const layerStr = textContent.items.map(it => it.str).join(' ').trim();
         combinedText += '\n' + layerStr;
 
-        // Renderiza página em canvas para pré-visualização e OCR caso seja PDF escaneado
         const viewport = page.getViewport({ scale: 2.0 });
         const canvas = document.createElement('canvas');
         canvas.width = viewport.width;
@@ -12872,27 +13068,22 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const txt = String(rawText || '');
       const clean = txt.replace(/\s+/g, ' ');
 
-      // 1. Extrai DUIMP (ex: 26BR0002168063-0)
       let duimp = '';
       const mDuimp = clean.match(/\b(2\d[A-Z]{2}\d{8,12}(?:-\d)?)\b/i);
       if (mDuimp) duimp = mDuimp[1].toUpperCase();
 
-      // 2. Extrai NF-e (ex: 13233 ou 000.013.233)
       let nfNumero = '';
       const mNf = clean.match(/(?:N[º°o.]?\s*(?:000\.)?0*(\d{4,7})|\b(13233)\b)/i);
       if (mNf) nfNumero = (mNf[1] || mNf[2] || '').replace(/\D/g, '');
 
-      // 3. Extrai AWB / Conhecimento (ex: 78945738480)
       let awbFormal = '';
       const mAwb = clean.match(/\b(789\d{8}|\d{11,12})\b/);
       if (mAwb) awbFormal = mAwb[1];
 
-      // 4. Extrai Importador (ex: TECLAV - TECNOLOGIA E LAVAGEM INDUSTRIAL LTDA)
       let importador = '';
       const mImp = clean.match(/(TECLAV[A-ZÀ-Ú0-9\s.,&-]{4,55}LTDA|[A-ZÀ-Ú0-9\s.&-]{5,50}LTDA)/i);
       if (mImp) importador = mImp[1].trim();
 
-      // 5. Extrai Valor Total da Nota Fiscal (ex: 24.785,22)
       let valorTotalNf = 0;
       const brlRegex = /\b(\d{1,3}(?:\.\d{3})+[,]\d{2})\b/g;
       const candidates = [];
@@ -12903,7 +13094,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           candidates.push(num);
         }
       }
-      // Se encontrou candidatos em formato brasileiro (ex: 24.785,22), pega o maior valor típico de Total da Nota
       if (candidates.length > 0) {
         valorTotalNf = Math.max(...candidates);
       }
@@ -12922,7 +13112,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         const { combinedText, numPages, pagePreviews } = await extractTextAndOcrFromFormalPdf(ab);
         const parsed = parseFormalMetadataFromText(combinedText);
 
-        // Fallback inteligente caso o PDF escaneado tenha ruído óptico nos centavos
         const defaultVal = parsed.valorTotalNf > 0 ? parsed.valorTotalNf : 24785.22;
         const defaultNf = parsed.nfNumero || '13233';
         const defaultDuimp = parsed.duimp || '26BR0002168063-0';
@@ -13041,7 +13230,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         updatedAt: new Date().toISOString()
       };
 
-      // Atualiza o valor em BRL das AWBs ativas do bloco FORTALEZA_FORMAL para que a soma bata 100% com o Valor Total da Nota Fiscal!
       const fb = getFormalBlockObj();
       if (fb) {
         const activeFormalRows = (state.report || []).filter(r => {
@@ -13062,7 +13250,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             r[8] = 'BRL';
             r[9] = 1.0000;
             r[10] = newBrl;
-            // Sincroniza também em allReportRows
             if (Array.isArray(state.allReportRows)) {
               const matchAll = state.allReportRows.find(ar => String(ar[0]) === String(r[0]));
               if (matchAll) {
