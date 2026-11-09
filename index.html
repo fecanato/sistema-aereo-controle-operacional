@@ -1282,13 +1282,21 @@
       }).join('');
     }
 
+    function getLocalTodayIso() {
+      const d = new Date();
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd}`;
+    }
+
     function openCreateOperationModal() {
       const openOps = operationsCatalog.filter(o => o.status === 'ABERTA');
       if (openOps.length > 0) {
         showToast('Já existe uma operação em andamento. Finalize-a antes de criar uma nova ou entre nela.');
         return;
       }
-      const todayIso = new Date().toISOString().slice(0, 10);
+      const todayIso = getLocalTodayIso();
       openModal(
         'Criar Nova Operação Aérea',
         `<div class="space-y-3">
@@ -1307,7 +1315,7 @@
     }
 
     function confirmCreateNewOperation() {
-      const dt = document.getElementById('modalNewOpDate')?.value || new Date().toISOString().slice(0, 10);
+      const dt = document.getElementById('modalNewOpDate')?.value || getLocalTodayIso();
       const customName = (document.getElementById('modalNewOpName')?.value || '').trim();
       const opId = 'OP_' + dt.replace(/-/g, '') + '_' + Date.now().toString().slice(-4);
       const opName = customName ? `${customName} (${formatDateBr(dt)})` : `Operação ${formatDateBr(dt)}`;
@@ -1403,13 +1411,12 @@
         target.snapshot.status = 'ABERTA';
         target.snapshot.finalizedAt = null;
       }
-      if (state.opId === opId) {
-        state.status = 'ABERTA';
-        state.finalizedAt = null;
-      }
-      saveCatalogAndState();
-      showToast(`Operação ${formatDateBr(target.flightDate)} reaberta com sucesso!`);
       enterOperationById(opId);
+      state.status = 'ABERTA';
+      state.finalizedAt = null;
+      saveCatalogAndState();
+      executePushOperationToSupabase(target);
+      showToast(`Operação ${formatDateBr(target.flightDate)} reaberta com sucesso!`);
     }
 
     function loadDemoOperationIntoActive() {
@@ -1548,11 +1555,13 @@
           if (!palletGroups[baseId].some(x => x.awb === awb)) {
             palletGroups[baseId].push(pInfo);
           }
-        } else if (isAwbActiveDg(awb) && consMap.has(cons)) {
-          const cObj = consMap.get(cons);
-          const baseId = getCurrentBlockForCons(cObj).replace(/\|(DG|PALLET)$/i, '');
+        } else if (isAwbActiveDg(awb)) {
+          const fullBlockId = getCurrentBlockForAwb(awb, cons);
+          const baseId = String(fullBlockId || 'VIXA').replace(/\|(DG|PALLET)$/i, '');
           if (!dgGroups[baseId]) dgGroups[baseId] = [];
-          dgGroups[baseId].push(awb);
+          if (!dgGroups[baseId].includes(awb)) {
+            dgGroups[baseId].push(awb);
+          }
         }
       }
 
@@ -1751,7 +1760,19 @@
           const cCount = caixasCountByBlock[b.id] || 0;
           const sCount = sacasSeenByBlock[b.id] ? sacasSeenByBlock[b.id].size : 0;
           const comailQty = (!isSpecial && state.comail && state.comail[b.id]) ? Number(state.comail[b.id]) : 0;
-          b.vol = cCount + sCount + comailQty;
+          const calcVol = cCount + sCount + comailQty;
+          if (b.manualVolOverride !== undefined && b.manualVolOverride !== null) {
+            if (b.manualVolBaseCalc === undefined || b.manualVolBaseCalc === calcVol) {
+              b.vol = Number(b.manualVolOverride);
+            } else {
+              delete b.manualVolOverride;
+              delete b.manualVolBaseCalc;
+              delete b.manualVolFromCte;
+              b.vol = calcVol;
+            }
+          } else {
+            b.vol = calcVol;
+          }
           if (b.vol <= 0 || resetWeights) {
             b.peso = 0;
           } else if (Number(b.peso || 0) <= 0 && state.pesosAppByBlock && state.pesosAppByBlock[b.id] && Number(state.pesosAppByBlock[b.id].totalKg || 0) > 0) {
@@ -1769,6 +1790,13 @@
       state.lacres = {};
       state.novosLacres = {};
       state.comail = {};
+      state.comailPesos = {};
+      state._autoComailBlocks = {};
+      state.pesosAppByBlock = {};
+      state.crossReconciliations = {};
+      state.ignoredScaleAnomalies = [];
+      state.formalDoc = null;
+      state.awbTimes = {};
       state.movimentacoes = {};
       state.recusas = [];
       state.dgs = [];
@@ -1822,13 +1850,20 @@
       state.dgs = [];
       state.pallets = {};
       state.foraDoVoo = [];
+      state.movimentacoes = {};
+      state.blocks = state.blocks.filter(b => !String(b.id).endsWith('|DG') && !String(b.id).endsWith('|PALLET'));
       for (const b of state.blocks) {
-        b.vol = 0;
-        b.peso = 0;
+        delete b.manualVolOverride;
+        delete b.manualVolBaseCalc;
+        delete b.manualVolFromCte;
+        const comQty = (state.comail && state.comail[b.id]) ? Number(state.comail[b.id]) : 0;
+        b.vol = comQty;
+        const appSt = state.pesosAppByBlock && state.pesosAppByBlock[b.id];
+        b.peso = (appSt && Number(appSt.totalKg || 0) > 0) ? Math.round(Number(appSt.totalKg) * 1000) / 1000 : 0;
       }
       saveCatalogAndState();
       renderAll();
-      showToast('Relatório limpo. CONS preservadas.');
+      showToast('Relatório limpo. CONS e pesagens da balança preservadas.');
     }
 
     function clearPesosOnly() {
@@ -2041,7 +2076,7 @@
                         <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
                         <td class="py-2 px-3 truncate max-w-[180px] text-slate-500 dark:text-slate-400">${city}</td>
                         <td class="py-2 px-3 text-right whitespace-nowrap">
-                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100">
+                          <button type="button" onclick="goToAwbInReportTab('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100 cursor-pointer">
                             Ver no Report
                           </button>
                         </td>
@@ -2109,7 +2144,7 @@
                         <td class="py-2 px-3 text-center font-mono">${time}</td>
                         <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
                         <td class="py-2 px-3 text-right">
-                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                          <button type="button" onclick="goToAwbInReportTab('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100 cursor-pointer">
                             Ver no Report
                           </button>
                         </td>
@@ -2155,7 +2190,7 @@
                         <td class="py-2 px-3 text-center font-mono">${time}</td>
                         <td class="py-2 px-3 text-right font-mono font-semibold">${wt}</td>
                         <td class="py-2 px-3 text-right">
-                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                          <button type="button" onclick="goToAwbInReportTab('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100 cursor-pointer">
                             Ver no Report
                           </button>
                         </td>
@@ -2202,7 +2237,7 @@
                         <td class="py-2 px-3 text-right font-mono font-semibold">${peso}</td>
                         <td class="py-2 px-3 text-center font-mono">${time}</td>
                         <td class="py-2 px-3 text-right">
-                          <button type="button" onclick="closeModal(); selectQuickAwb('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px]">
+                          <button type="button" onclick="goToAwbInReportTab('${awb}');" class="px-2 py-1 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 font-bold text-[10px] hover:bg-purple-100 cursor-pointer">
                             Ver no Report
                           </button>
                         </td>
@@ -2662,6 +2697,47 @@
       renderAll();
     }
 
+    function goToAwbInReportTab(awb) {
+      const clean = String(awb || '').replace(/\D/g, '');
+      if (!clean) {
+        showToast('AWB inválida para localizar no relatório.');
+        return;
+      }
+      if (typeof hideChronoAwbTooltip === 'function') hideChronoAwbTooltip();
+      closeModal();
+      selectQuickAwb(clean);
+
+      // Reseta filtros restritivos da aba Relatório para garantir que a AWB apareça na tabela
+      const statusSel = document.getElementById('filterReportStatus');
+      if (statusSel) statusSel.value = 'ALL';
+      if (typeof reportTableFilterState !== 'undefined' && reportTableFilterState.selectedValues) {
+        for (const k of Object.keys(reportTableFilterState.selectedValues)) {
+          reportTableFilterState.selectedValues[k] = null;
+        }
+      }
+      window._reportShowAllRows = true;
+
+      switchTab('report');
+      const searchInp = document.getElementById('filterReportSearch');
+      if (searchInp) {
+        searchInp.value = clean;
+      }
+      renderReportTable();
+
+      setTimeout(() => {
+        const rowEl = document.querySelector(`#reportTableBody tr[data-awb="${clean}"]`);
+        if (rowEl) {
+          rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          rowEl.classList.add('ring-2', 'ring-purple-500', 'bg-purple-500/20');
+          setTimeout(() => {
+            rowEl.classList.remove('ring-2', 'ring-purple-500', 'bg-purple-500/20');
+          }, 2600);
+        } else {
+          showToast(`AWB ${clean} filtrada na aba Relatório.`);
+        }
+      }, 80);
+    }
+
     function locateAwbInReportTab() {
       const raw = document.getElementById('quickAwbInput').value;
       const clean = String(raw || '').replace(/\D/g, '');
@@ -2669,12 +2745,7 @@
         showToast('Digite uma AWB para buscar.');
         return;
       }
-      switchTab('report');
-      const searchInp = document.getElementById('filterReportSearch');
-      if (searchInp) {
-        searchInp.value = clean;
-        renderReportTable();
-      }
+      goToAwbInReportTab(clean);
     }
 
     async function pasteAwbFromClipboard() {
@@ -2711,6 +2782,25 @@
       return total > 0 && total === totalSpecial;
     }
 
+    // Verifica se uma CONS possui 100% de suas AWBs recusadas, fora do voo ou transferidas para fora do bloco
+    function isCons100PercentInactiveInBlock(consStr, blockId) {
+      if (!Array.isArray(state.report) || state.report.length === 0) return false;
+      let totalInReport = 0;
+      let activeRegularInBlock = 0;
+      for (const r of state.report) {
+        if (String(r[1]) === String(consStr)) {
+          const awb = String(r[0] || '').trim();
+          if (!awb) continue;
+          totalInReport++;
+          if (state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) continue;
+          if (getCurrentBlockForAwb(awb, String(consStr)) === blockId) {
+            activeRegularInBlock++;
+          }
+        }
+      }
+      return totalInReport > 0 && activeRegularInBlock === 0;
+    }
+
     function getBlockConsAndSeals(blockId) {
       if (String(blockId).endsWith('|PALLET')) {
         const palletAwbs = state.report
@@ -2724,7 +2814,11 @@
           .map(r => String(r[0]));
         return { consItems: [], dgAwbs, palletAwbs: [], originalSeals: [] };
       }
-      const consItems = state.cons.filter(c => getCurrentBlockForCons(c) === blockId && !isCons100PercentDg(c.cons));
+      const consItems = state.cons.filter(
+        c => getCurrentBlockForCons(c) === blockId &&
+             !isCons100PercentDg(c.cons) &&
+             !isCons100PercentInactiveInBlock(c.cons, blockId)
+      );
       const originalSeals = [];
       for (const c of consItems) {
         const seals = state.lacres[c.cons] || [];
@@ -3390,6 +3484,14 @@
     function clearAllCtes() {
       state.ctes = {};
       state.preAlertaConcluido = {};
+      for (const b of (state.blocks || [])) {
+        if (b.manualVolFromCte) {
+          delete b.manualVolOverride;
+          delete b.manualVolBaseCalc;
+          delete b.manualVolFromCte;
+        }
+      }
+      recalculateVolumesFromReport(false);
       saveCatalogAndState();
       renderAll();
       showToast('Todos os CT-es importados foram removidos da operação atual.');
@@ -3399,6 +3501,13 @@
       if (state.ctes && state.ctes[blockId]) {
         delete state.ctes[blockId];
         if (state.preAlertaConcluido) delete state.preAlertaConcluido[blockId];
+        const b = (state.blocks || []).find(x => x.id === blockId);
+        if (b && b.manualVolFromCte) {
+          delete b.manualVolOverride;
+          delete b.manualVolBaseCalc;
+          delete b.manualVolFromCte;
+        }
+        recalculateVolumesFromReport(false);
         saveCatalogAndState();
         renderAll();
         showToast(`CT-e desvinculado do bloco ${blockId}.`);
@@ -3460,7 +3569,13 @@
       if (!b || !cte) return;
       if (cte.orig) b.orig = cte.orig;
       if (cte.awbAereo) b.awbAereo = cte.awbAereo;
-      if (Number(cte.vol) >= 0) b.vol = Number(cte.vol);
+      if (Number(cte.vol) >= 0) {
+        const prevCalc = b.manualVolBaseCalc !== undefined ? b.manualVolBaseCalc : Number(b.vol || 0);
+        b.vol = Number(cte.vol);
+        b.manualVolOverride = Number(cte.vol);
+        b.manualVolBaseCalc = prevCalc;
+        b.manualVolFromCte = true;
+      }
       if (Number(cte.peso) >= 0) b.peso = Number(cte.peso);
       const cteSeals = (cte.lacres || []).map(normalizeSeal6).filter(Boolean);
       if (cteSeals.length > 0) {
@@ -3594,6 +3709,19 @@
           } else {
             if (!activeAwbs.includes(awb)) activeAwbs.push(awb);
             if (cons && !cons.startsWith('PALLET_')) activeConsSet.add(cons);
+          }
+        }
+      }
+
+      // Verifica também se alguma CONS deste bloco teve AWBs recusadas, fora do voo ou desmembradas para |DG, |PALLET ou outro bloco
+      if (!isSpecialBlock && !hasCutInBlock && activeConsSet.size > 0) {
+        for (const r of state.report) {
+          const awb = String(r[0] || '').trim();
+          const cons = String(r[1] || '').trim();
+          if (!awb || !activeConsSet.has(cons)) continue;
+          if (state.recusas.includes(awb) || state.foraDoVoo.includes(awb) || getCurrentBlockForAwb(awb, cons) !== b.id) {
+            hasCutInBlock = true;
+            break;
           }
         }
       }
@@ -4688,6 +4816,19 @@
       if (Array.isArray(state.report)) state.report.forEach(applyToRow);
       if (Array.isArray(state.allReportRows)) state.allReportRows.forEach(applyToRow);
 
+      if (dest) {
+        const cObj = state.cons.find(c => c.cons === cons);
+        const tipoForBlock = cObj ? cObj.tipo : (lacre ? 'SACA' : 'CAIXAS');
+        const targetBlockId = determineBlockId(dest, tipoForBlock);
+        const consBlockId = cObj ? getCurrentBlockForCons(cObj) : targetBlockId;
+        if (!state.movimentacoes) state.movimentacoes = {};
+        if (targetBlockId && targetBlockId !== consBlockId) {
+          state.movimentacoes[cleanAwb] = targetBlockId;
+        } else {
+          delete state.movimentacoes[cleanAwb];
+        }
+      }
+
       recalculateVolumesFromReport(false);
       reAuditCurrentReport(false);
       saveCatalogAndState();
@@ -4770,11 +4911,18 @@
       const chipsEl = document.getElementById('reportActiveFilterChips');
       if (chipsEl) chipsEl.innerHTML = activeChips.join('');
 
+      const maxRowsToRender = window._reportShowAllRows ? filteredRows.length : Math.min(filteredRows.length, 500);
+      const isTruncated = filteredRows.length > maxRowsToRender;
+
       const counterEl = document.getElementById('reportFilterRowCounter');
       if (counterEl) {
-        counterEl.textContent = filteredRows.length === state.report.length
-          ? `${state.report.length} AWBs`
-          : `Exibindo ${filteredRows.length} de ${state.report.length} AWBs`;
+        if (isTruncated) {
+          counterEl.innerHTML = `Exibindo ${maxRowsToRender} de ${filteredRows.length} AWBs <button type="button" onclick="window._reportShowAllRows = true; renderReportTable();" class="ml-1 underline text-purple-600 dark:text-purple-400 font-bold hover:opacity-80 cursor-pointer">(Mostrar todas)</button>`;
+        } else {
+          counterEl.textContent = filteredRows.length === state.report.length
+            ? `${state.report.length} AWBs`
+            : `Exibindo ${filteredRows.length} de ${state.report.length} AWBs`;
+        }
       }
 
       const clearBtn = document.getElementById('btnClearAllReportFilters');
@@ -4784,7 +4932,7 @@
       }
 
       const rowsHtml = [];
-      for (let i = 0; i < Math.min(filteredRows.length, 300); i++) {
+      for (let i = 0; i < maxRowsToRender; i++) {
         const r = filteredRows[i];
         const awb = String(r[0]);
         const cons = String(r[1]);
@@ -4799,7 +4947,7 @@
         if (isFora) rowClass = 'row-fora font-semibold';
 
         rowsHtml.push(`
-          <tr class="${rowClass} hover:opacity-95 transition">
+          <tr data-awb="${awb}" class="${rowClass} hover:opacity-95 transition">
             <td class="py-2 px-3 font-mono font-bold cursor-pointer underline" onclick="selectQuickAwb('${awb}')">${awb}</td>
             <td class="py-2 px-3 font-mono">${cons}</td>
             <td class="py-2 px-3 font-mono">${r[2] || ''}</td>
@@ -4822,6 +4970,18 @@
         `);
       }
 
+      if (isTruncated) {
+        rowsHtml.push(`
+          <tr class="bg-purple-50/80 dark:bg-slate-800/90 border-t border-purple-200 dark:border-slate-700">
+            <td colspan="13" class="py-3 px-4 text-center">
+              <span class="text-xs text-slate-600 dark:text-slate-300 mr-2">Exibindo as primeiras <b>${maxRowsToRender}</b> de <b>${filteredRows.length}</b> AWBs filtradas.</span>
+              <button type="button" onclick="window._reportShowAllRows = true; renderReportTable();" class="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold shadow-xs transition cursor-pointer">
+                Mostrar todas as ${filteredRows.length} AWBs
+              </button>
+            </td>
+          </tr>
+        `);
+      }
       tbody.innerHTML = rowsHtml.join('') || '<tr><td colspan="13" class="py-8 text-center text-slate-400">Nenhuma AWB encontrada para o filtro atual.</td></tr>';
     }
 
@@ -5678,7 +5838,7 @@
         const friendly = (PRACA_FRIENDLY_NAMES[baseId] || blockObj.dest) + suffix;
         const key = `${blockObj.cia}|${blockId}`;
         if (!summaryMap.has(key)) {
-          summaryMap.set(key, { cia: blockObj.cia, destName: friendly, count: 0, brl: 0, blockId });
+          summaryMap.set(key, { cia: blockObj.cia, destCode: blockObj.dest, destName: friendly, count: 0, brl: 0, blockId });
         }
         const item = summaryMap.get(key);
         item.count += 1;
@@ -5761,7 +5921,7 @@
       const raw = String( exportDestNameForMinutaWeb(blockId, destCode) || destCode || blockId || '' ).trim().toUpperCase();
       if (idUp === 'FORTALEZA_FORMAL') return 'FOR FORMAL';
       if (idUp === 'BRASILIA_SACA') return 'BSB SACA';
-      if (idUp === 'BRASILIA_CAIXA') return 'BSB CAIXA';
+      if (idUp === 'BRASILIA_CAIXA' || idUp === 'BRASILIA_CAIXAS') return 'BSB CAIXA';
       if (idUp === 'JOAO_PESSOA_VIA_RECIFE') return 'JPA';
       if (idUp === 'ITN_IOS_TXT') return 'ITN/IOS';
 
@@ -6380,15 +6540,24 @@
       const resolvedTime = String(p.time || getAwbConsTime(cleanAwb) || '').trim();
       const resolvedMins = (p.mins !== undefined && p.mins !== null) ? p.mins : timeStrToMinutes(resolvedTime);
 
-      state.pallets[cleanAwb] = {
-        awb: cleanAwb,
-        dest: p.dest,
-        baseId,
-        vol,
-        peso,
-        time: resolvedTime,
-        mins: resolvedMins
-      };
+      if (state.pallets[cleanAwb]) {
+        state.pallets[cleanAwb].vol = Number(state.pallets[cleanAwb].vol || 0) + vol;
+        state.pallets[cleanAwb].peso = Math.round((Number(state.pallets[cleanAwb].peso || 0) + peso) * 1000) / 1000;
+        if (!state.pallets[cleanAwb].time && resolvedTime) {
+          state.pallets[cleanAwb].time = resolvedTime;
+          state.pallets[cleanAwb].mins = resolvedMins;
+        }
+      } else {
+        state.pallets[cleanAwb] = {
+          awb: cleanAwb,
+          dest: p.dest,
+          baseId,
+          vol,
+          peso,
+          time: resolvedTime,
+          mins: resolvedMins
+        };
+      }
       if (resolvedTime) {
         if (!state.awbTimes) state.awbTimes = {};
         if (!state.awbTimes[cleanAwb]) state.awbTimes[cleanAwb] = resolvedTime;
@@ -6536,7 +6705,7 @@
           } catch (e) {}
         }
 
-        if (!state.pallets) state.pallets = {};
+        state.pallets = {};
         const pesoByBlock = {};
         const appStatsByBlock = {};
         state.pesosGestaoOpId = opId;
@@ -6593,15 +6762,24 @@
           const rawTsStr = String((rawRow && (rawRow.criada_em || rawRow.horario)) || (metaP && (metaP.criada_em || metaP.horario || metaP.updatedAt)) || resolvedTime || '');
 
           if (existsInReport) {
-            state.pallets[cleanAwb] = {
-              awb: cleanAwb,
-              dest: destRaw,
-              baseId,
-              vol: Math.max(1, vol),
-              peso: kg,
-              time: resolvedTime,
-              mins: resolvedMins
-            };
+            if (state.pallets[cleanAwb]) {
+              state.pallets[cleanAwb].vol = Number(state.pallets[cleanAwb].vol || 0) + Math.max(1, vol);
+              state.pallets[cleanAwb].peso = Math.round((Number(state.pallets[cleanAwb].peso || 0) + Number(kg || 0)) * 1000) / 1000;
+              if (!state.pallets[cleanAwb].time && resolvedTime) {
+                state.pallets[cleanAwb].time = resolvedTime;
+                state.pallets[cleanAwb].mins = resolvedMins;
+              }
+            } else {
+              state.pallets[cleanAwb] = {
+                awb: cleanAwb,
+                dest: destRaw,
+                baseId,
+                vol: Math.max(1, vol),
+                peso: kg,
+                time: resolvedTime,
+                mins: resolvedMins
+              };
+            }
             pesoByBlock[palletBlockId] = (pesoByBlock[palletBlockId] || 0) + kg;
             const st = ensureAppStat(palletBlockId);
             st.palletVol += Math.max(1, vol);
@@ -6622,7 +6800,11 @@
             });
             palletMovedCount++;
           } else {
-            if (!unregisteredPallets.some(u => u.awb === cleanAwb)) {
+            const existingUnreg = unregisteredPallets.find(u => u.awb === cleanAwb);
+            if (existingUnreg) {
+              existingUnreg.vol = Number(existingUnreg.vol || 0) + Math.max(1, vol);
+              existingUnreg.peso = Math.round((Number(existingUnreg.peso || 0) + Number(kg || 0)) * 1000) / 1000;
+            } else {
               unregisteredPallets.push({
                 id: String((rawRow && rawRow.id) || (metaP && metaP.id) || ('PLT_' + cleanAwb)),
                 awb: cleanAwb,
@@ -7054,7 +7236,7 @@
         const peso = Number(b.peso || 0);
         if (vol <= 0 && peso <= 0) continue;
 
-        const { originalSeals } = getBlockConsAndSeals(b.id);
+        const activeSeals = getActiveSealsForBlock(b.id);
         let valTotal = getBlockValorTotalBrl(b.id);
         if (valTotal <= 0) valTotal = 1.00;
 
@@ -7065,7 +7247,7 @@
           ORIGEM: b.orig,
           CIA: cia,
           DESTINO: exportDestNameForMinutaWeb(b.id, b.dest),
-          LACRE_ORIGINAL: originalSeals.join(' / '),
+          LACRE_ORIGINAL: activeSeals.join(' / '),
           VOLUME: vol,
           PESO: peso,
           VALOR_TOTAL: valTotal,
@@ -7615,7 +7797,12 @@
         }
 
         if (effectiveMode === 'CONS') {
-          // Preserva eventuais CONS Delivery já importadas ou limpa apenas as CONS SORT
+          // Remove os lacres das CONS SORT antigas antes de substituir a lista
+          const removedSortCons = state.cons.filter(c => c.source !== 'DELIVERY').map(c => c.cons);
+          for (const rc of removedSortCons) {
+            if (state.lacres) delete state.lacres[rc];
+            if (state.novosLacres) delete state.novosLacres[rc];
+          }
           state.cons = state.cons.filter(c => c.source === 'DELIVERY');
         }
 
@@ -8294,7 +8481,7 @@
 
       // 1. Se uma pendência era CONS INCORRETA e a CONS agora existe em state.cons (ou virou PALLET), resolve automaticamente!
       for (const p of state.reportPendencias) {
-        if (p.status === 'PENDENTE' && p.tipo === 'CONS INCORRETA') {
+        if (p.status === 'PENDENTE' && !p._reopenedManually && p.tipo === 'CONS INCORRETA') {
           if (consMap.has(p.cons)) {
             p.status = 'RESOLVIDO';
             p.resolucao = `CONS ${p.cons} importada na operação (${consMap.get(p.cons).dest})`;
@@ -8893,7 +9080,7 @@
       }
 
       const sel = document.getElementById(`selFixCons_${pendId}`);
-      const targetCons = sel ? sel.value : p.sugestaoCons;
+      const targetCons = (sel && sel.value) ? sel.value : p.sugestaoCons;
       const targetConsObj = state.cons.find(c => c.cons === targetCons);
       if (!targetConsObj) {
         showToast('Selecione uma CONS válida da operação.');
@@ -9082,9 +9269,32 @@
     function reopenReportPendencia(pendId) {
       const p = (state.reportPendencias || []).find(x => x.id === pendId);
       if (!p) return;
+      if (p.awb) {
+        if (Array.isArray(state.foraDoVoo)) {
+          const fIdx = state.foraDoVoo.indexOf(p.awb);
+          if (fIdx >= 0) state.foraDoVoo.splice(fIdx, 1);
+        }
+        if (state.movimentacoes && state.movimentacoes[p.awb]) {
+          delete state.movimentacoes[p.awb];
+        }
+        if (p.tipo === 'CONS INCORRETA' && p.cons) {
+          const revertRow = (r) => {
+            if (r && String(r[0]) === p.awb) {
+              r[1] = p.cons;
+              if (p.destLoc) r[6] = p.destLoc;
+            }
+          };
+          if (Array.isArray(state.allReportRows)) state.allReportRows.forEach(revertRow);
+          if (Array.isArray(state.report)) state.report.forEach(revertRow);
+        }
+      }
       p.status = 'PENDENTE';
+      p._reopenedManually = true;
+      delete p.resolucao;
+      recalculateVolumesFromReport(false);
       saveCatalogAndState();
       renderAll();
+      showToast(`Pendência da AWB ${p.awb || ''} reaberta para novo tratamento.`);
     }
 
     function applyAllSuggestedReportFixes() {
@@ -11966,7 +12176,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     function saveEditBlockWeight(blockId) {
       const b = state.blocks.find(x => x.id === blockId);
       if (!b) return;
-      b.vol = Math.max(0, parseFloat(document.getElementById('modalEditVol')?.value || '0'));
+      const newVol = Math.max(0, parseFloat(document.getElementById('modalEditVol')?.value || '0'));
+      const prevCalc = b.manualVolBaseCalc !== undefined ? b.manualVolBaseCalc : Number(b.vol || 0);
+      b.vol = newVol;
+      b.manualVolOverride = newVol;
+      b.manualVolBaseCalc = prevCalc;
+      b.manualVolFromCte = false;
       b.peso = Math.max(0, parseFloat(document.getElementById('modalEditPeso')?.value || '0'));
       saveCatalogAndState();
       renderAll();
@@ -12030,7 +12245,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           return appStatsByBlock[bid];
         };
 
-        if (!state.pallets) state.pallets = {};
+        state.pallets = {};
         let dgInserted = 0;
         let palletMovedCount = 0;
         let delivCount = 0;
@@ -12099,7 +12314,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               }
             }
             if (existsInSystem) {
-              state.pallets[cleanAwb] = { awb: cleanAwb, dest: destRaw, baseId, vol, peso: kg, time: resolvedTime, mins: resolvedMins };
+              if (state.pallets[cleanAwb]) {
+                state.pallets[cleanAwb].vol = Number(state.pallets[cleanAwb].vol || 0) + vol;
+                state.pallets[cleanAwb].peso = Math.round((Number(state.pallets[cleanAwb].peso || 0) + Number(kg || 0)) * 1000) / 1000;
+              } else {
+                state.pallets[cleanAwb] = { awb: cleanAwb, dest: destRaw, baseId, vol, peso: kg, time: resolvedTime, mins: resolvedMins };
+              }
               pesoByBlock[palletBlockId] = (pesoByBlock[palletBlockId] || 0) + kg;
               const st = ensureAppStat(palletBlockId);
               st.palletVol = (st.palletVol || 0) + vol;
@@ -12382,7 +12602,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           const m2 = parseTimeToMinutes(e2.time);
           const timeDiff = (m1 !== null && m2 !== null) ? Math.abs(m1 - m2) : 99;
           if (timeDiff <= 2 && e1.vol === e2.vol && Math.abs(Number(e1.kg) - Number(e2.kg)) <= 0.15 && Number(e1.kg) > 0) {
-            if (e1.slotAppVol > e1.slotSysVol || analysis.totalAppBoxDelivVol > analysis.totalSysBoxDelivVol) {
+            if (e1.slotAppVol > e1.slotSysVol || Number(analysis.totalAppBoxVol || 0) > Number(analysis.totalSysBoxVol || 0)) {
               const dupId = `DUP_${blockId}_${e1.time}_${e1.kg.toFixed(1)}`;
               if (!ignoredIds.has(dupId) && !duplicates.some(d => d.id === dupId)) {
                 duplicates.push({
@@ -12434,7 +12654,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       }
 
       // 3. Detector de Inversão de Categoria (Caixa lançada como Saca ou Saca lançada como Caixa)
-      const diffBox = Number(analysis.totalAppBoxDelivVol || 0) - Number(analysis.totalSysBoxDelivVol || 0);
+      const diffBox = Number(analysis.totalAppBoxVol || 0) - Number(analysis.totalSysBoxVol || 0);
       const diffSaca = Number(analysis.totalAppSacasCount || 0) - Number(analysis.totalSysSacasCount || 0);
       if (diffBox !== 0 && diffBox === -diffSaca) {
         const invId = `INV_${blockId}_${diffBox}`;
@@ -12456,7 +12676,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       // Nota: Em state.report, r[5] é o peso em kg (effectiveWt)!
       const totalSysKg = (analysis.slots || []).reduce((acc, s) => acc + Number(s.sysKg || 0), 0) + (analysis.sacaGroups || []).reduce((acc, g) => acc + Number(g.totalKg || 0), 0);
       const totalAppKg = Number(b.peso || 0);
-      const diffTotalVol = (Number(analysis.totalAppBoxDelivVol || 0) + Number(analysis.totalAppSacasCount || 0)) - (Number(analysis.totalSysBoxDelivVol || 0) + Number(analysis.totalSysSacasCount || 0));
+      const diffTotalVol = (Number(analysis.totalAppBoxVol || 0) + Number(analysis.totalAppSacasCount || 0)) - (Number(analysis.totalSysBoxVol || 0) + Number(analysis.totalSysSacasCount || 0));
       const absDeltaKg = Math.abs(totalAppKg - totalSysKg);
 
       if (diffTotalVol !== 0 || absDeltaKg >= 1.5) {
@@ -12626,8 +12846,8 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
       for (const cm of diag.combinatorialMatches) {
         const awbButtons = cm.awbs.filter(x => !x.isRefused).map(x => `
-          <button type="button" onclick="hideChronoAwbTooltip(); closeModal(); selectQuickAwb('${x.awb}');"
-            class="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-mono font-bold text-[10px]">
+          <button type="button" onclick="goToAwbInReportTab('${x.awb}');"
+            class="px-2.5 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-mono font-bold text-[10px] cursor-pointer">
             Inspecionar AWB ${x.awb} (${x.wt.toFixed(1)} kg)
           </button>
         `).join('');
