@@ -110,12 +110,14 @@
           <span id="supabaseStatusText">Online</span>
         </div>
 
-        <button type="button" onclick="syncOperationsWithSupabase()" class="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 border border-slate-200/70 dark:border-slate-700 transition" title="Sincronizar">
-          <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+        <button type="button" onclick="syncOperationsWithSupabase()" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition" title="Sincronizar">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
         </button>
 
-        <button type="button" onclick="toggleDarkMode()" id="darkModeBtn" class="h-8 w-8 inline-flex items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 border border-slate-200/70 dark:border-slate-700 transition" title="Alternar Tema">
-          <span id="darkModeIcon" class="text-xs leading-none">☀️</span>
+        <button type="button" onclick="toggleDarkMode()" id="darkModeBtn" class="p-2 rounded-xl bg-slate-100 dark:bg-slate-700/50 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-600 transition" title="Tema" aria-label="Alternar Tema">
+          <span id="darkModeIcon" class="inline-flex items-center justify-center">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          </span>
           <span id="darkModeLabel" class="hidden">Modo Claro</span>
         </button>
 
@@ -180,22 +182,18 @@
     </div>
 
     <div class="space-y-4">
-      <div class="flex items-center justify-between border-b border-slate-200 dark:border-slate-700 pb-2">
-        <div class="flex items-center gap-4">
-          <button type="button" id="opsTabOpenBtn" onclick="switchOpsScreenTab(false)" class="text-sm font-bold text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 pb-2 -mb-2">
-            Em andamento (<span id="opsOpenCount">0</span>)
-          </button>
-          <button type="button" id="opsTabHistoryBtn" onclick="switchOpsScreenTab(true)" class="text-sm font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 pb-2 -mb-2">
-            Histórico 48h (<span id="opsHistoryCount">0</span>)
-          </button>
-        </div>
-        <button type="button" onclick="syncOperationsWithSupabase()" class="text-xs font-semibold text-slate-500 hover:text-purple-600 dark:text-slate-400 dark:hover:text-purple-400 transition flex items-center gap-1">
-          <span>↻ Atualizar</span>
+      <div class="flex items-center gap-4 border-b border-slate-200 dark:border-slate-700 pb-2">
+        <button type="button" id="opsTabOpenBtn" onclick="switchOpsScreenTab(false)" class="text-sm font-bold text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 pb-2 -mb-2 transition">
+          Em andamento (<span id="opsOpenCount">0</span>)
         </button>
+        <button type="button" id="opsTabHistoryBtn" onclick="switchOpsScreenTab(true)" class="text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 border-b-2 border-transparent pb-2 -mb-2 transition">
+          Histórico 48h (<span id="opsHistoryCount">0</span>)
+        </button>
+        <button type="button" onclick="syncOperationsWithSupabase()" class="text-slate-400 hover:text-purple-600 dark:hover:text-purple-400 px-1.5 py-0.5 -mb-1 rounded-lg text-sm font-bold transition" title="Atualizar operações" aria-label="Atualizar operações">↻</button>
       </div>
 
       <!-- Operations List -->
-      <div id="operationsListContainer" class="space-y-3"></div>
+      <div id="operationsListContainer" class="space-y-4"></div>
     </div>
   </section>
 
@@ -475,14 +473,16 @@
         </div>
 
         <!-- Controle Rápido de AWB -->
-        <div class="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl shadow-xs border border-slate-200/90 dark:border-slate-800 overflow-hidden flex flex-col">
+        <div class="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl shadow-xs border border-slate-200/90 dark:border-slate-800 overflow-visible flex flex-col">
           <div class="px-5 py-3.5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <span class="font-bold text-xs uppercase tracking-wider text-slate-700 dark:text-slate-200">Controle Rápido de AWB</span>
+            <span class="text-[11px] text-slate-400 dark:text-slate-500">Digite parte dos dígitos, destino ou destinatário para ver sugestões</span>
           </div>
           <div class="p-5 space-y-4 flex-1 flex flex-col justify-between">
             <div class="flex flex-wrap items-center gap-2.5">
-              <div class="relative flex-1 min-w-[240px]">
-                <input id="quickAwbInput" type="text" maxlength="14" placeholder="Digite ou cole a AWB de 12 dígitos..." oninput="previewQuickAwb(this.value)" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-600" />
+              <div class="relative flex-1 min-w-[240px]" id="quickAwbSearchWrap">
+                <input id="quickAwbInput" type="text" maxlength="32" autocomplete="off" placeholder="Digite parte da AWB, final, destino ou destinatário..." oninput="previewQuickAwb(this.value)" onfocus="previewQuickAwb(this.value)" onkeydown="handleQuickAwbKeydown(event)" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-2 text-sm font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-600" />
+                <div id="quickAwbSuggestionsDropdown" class="hidden absolute left-0 right-0 top-full mt-1.5 z-50 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl shadow-xl max-h-64 overflow-y-auto scrollbar-thin divide-y divide-slate-100 dark:divide-slate-700/60"></div>
               </div>
               <button type="button" onclick="pasteAwbFromClipboard()" class="btn-web px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs border border-slate-200 dark:border-slate-700">
                 Colar
@@ -1024,7 +1024,11 @@
       document.documentElement.classList.toggle('dark', darkMode);
       const icon = document.getElementById('darkModeIcon');
       const label = document.getElementById('darkModeLabel');
-      if (icon) icon.textContent = darkMode ? '☀️' : '🌙';
+      if (icon) {
+        icon.innerHTML = darkMode
+          ? '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>'
+          : '<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>';
+      }
       if (label) label.textContent = darkMode ? 'Modo Claro' : 'Modo Noturno';
     }
 
@@ -1197,23 +1201,27 @@
     }
 
     function switchOpsScreenTab(isHistory) {
-      opsHistoryTab = isHistory;
-      const openBtn = document.getElementById('opsTabOpenBtn');
-      const histBtn = document.getElementById('opsTabHistoryBtn');
-      if (openBtn && histBtn) {
-        if (!isHistory) {
-          openBtn.className = 'text-sm font-bold text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 pb-2 -mb-2';
-          histBtn.className = 'text-sm font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 pb-2 -mb-2';
-        } else {
-          histBtn.className = 'text-sm font-bold text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 pb-2 -mb-2';
-          openBtn.className = 'text-sm font-bold text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 pb-2 -mb-2';
-        }
-      }
+      opsHistoryTab = Boolean(isHistory);
       renderOperationsScreen();
     }
 
     function renderOperationsScreen() {
       pruneExpiredHistory();
+      const openBtn = document.getElementById('opsTabOpenBtn');
+      const histBtn = document.getElementById('opsTabHistoryBtn');
+      const subEl = document.getElementById('opsScreenSubtitle');
+      const activeTabCls = 'text-sm font-bold text-purple-600 dark:text-purple-400 border-b-2 border-purple-600 dark:border-purple-400 pb-2 -mb-2 transition';
+      const inactiveTabCls = 'text-sm font-bold text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300 border-b-2 border-transparent pb-2 -mb-2 transition';
+      if (openBtn && histBtn) {
+        openBtn.className = !opsHistoryTab ? activeTabCls : inactiveTabCls;
+        histBtn.className = opsHistoryTab ? activeTabCls : inactiveTabCls;
+      }
+      if (subEl) {
+        subEl.textContent = opsHistoryTab
+          ? 'Operações finalizadas nas últimas 48 horas.'
+          : 'Uma equipe. Uma operação. Todo o controle aéreo.';
+      }
+
       const openOps = operationsCatalog.filter(o => o.status === 'ABERTA');
       const closedOps = operationsCatalog.filter(o => o.status === 'FINALIZADA');
 
@@ -1225,7 +1233,7 @@
 
       if (rows.length === 0) {
         listEl.innerHTML = `
-          <div class="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl p-8 text-center">
+          <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-8 text-center">
             <p class="text-sm text-slate-500 dark:text-slate-400 font-medium">
               ${opsHistoryTab ? 'Nenhuma operação no histórico de 48h.' : 'Nenhuma operação aberta. Crie a operação do dia para começar.'}
             </p>
@@ -1242,20 +1250,20 @@
         const dtStr = formatDateBr(op.flightDate);
         if (!isClosed) {
           return `
-            <div onclick="enterOperationById('${op.id}')" class="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-sm hover:border-purple-500 dark:hover:border-purple-500 cursor-pointer transition flex items-center justify-between group">
+            <div onclick="enterOperationById('${op.id}')" class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-sm hover:border-purple-500 dark:hover:border-purple-500 cursor-pointer transition flex items-center justify-between group">
               <div>
-                <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 dark:text-emerald-400 text-[10px] font-bold uppercase tracking-wider mb-2">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[11px] font-bold mb-2">
                   <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Em andamento
                 </span>
-                <h3 class="font-bold text-slate-900 dark:text-white text-lg tracking-tight">${op.name}</h3>
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">${dtStr} • ${consCount} CONS • ${awbCount} AWBs • Entrar para controlar blocos e minutas</p>
+                <h3 class="font-bold text-slate-900 dark:text-white text-xl tracking-tight">${op.name}</h3>
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">${dtStr} · ${consCount} CONS · ${awbCount} AWBs · Entrar para controlar blocos e minutas</p>
               </div>
-              <span class="text-purple-600 dark:text-purple-400 text-xl font-bold group-hover:translate-x-1 transition-transform">→</span>
+              <span class="text-purple-600 dark:text-purple-400 text-2xl leading-none group-hover:translate-x-1 transition-transform">→</span>
             </div>
           `;
         } else {
           return `
-            <div class="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm flex items-center justify-between flex-wrap gap-3">
+            <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm flex items-center justify-between flex-wrap gap-3">
               <div onclick="enterOperationById('${op.id}')" class="cursor-pointer">
                 <h3 class="font-bold text-slate-900 dark:text-white text-lg tracking-tight">${op.name}</h3>
                 <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">Finalizada • No histórico por 48h (${consCount} CONS · ${awbCount} AWBs)</p>
@@ -1264,7 +1272,7 @@
                 <button type="button" onclick="reopenOperationById('${op.id}')" class="px-4 py-2 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400 text-xs font-bold hover:bg-purple-500/20 transition">
                   Reabrir operação
                 </button>
-                <button type="button" onclick="enterOperationById('${op.id}')" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 transition">
+                <button type="button" onclick="enterOperationById('${op.id}')" class="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold hover:bg-slate-200 dark:hover:bg-slate-600 transition">
                   Consultar →
                 </button>
               </div>
@@ -2340,19 +2348,228 @@
       }
     }
 
-    function previewQuickAwb(val) {
-      const clean = String(val || '').replace(/\D/g, '');
+    let _quickAwbHighlightIdx = -1;
+    let _quickAwbCurrentMatches = [];
+
+    function highlightAwbDigits(awbStr, digitsQuery) {
+      const s = String(awbStr || '');
+      const q = String(digitsQuery || '');
+      if (!q) return s;
+      const idx = s.indexOf(q);
+      if (idx === -1) return s;
+      return (
+        s.slice(0, idx) +
+        `<mark class="bg-purple-500/25 text-purple-700 dark:text-purple-300 font-extrabold rounded px-0.5">${s.slice(idx, idx + q.length)}</mark>` +
+        s.slice(idx + q.length)
+      );
+    }
+
+    function findQuickAwbSuggestions(rawVal) {
+      const raw = String(rawVal || '').trim();
+      const digits = raw.replace(/\D/g, '');
+      const upper = raw.toUpperCase();
+      if (!raw || (digits.length === 0 && upper.length < 2)) return [];
+
+      const rows = Array.isArray(state.report) ? state.report : [];
+      const scored = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const awb = String(r[0] || '').trim();
+        if (!awb) continue;
+        const cons = String(r[1] || '').trim();
+        const destLoc = String(r[2] || '').trim().toUpperCase();
+        const recip = String(r[3] || '').trim().toUpperCase();
+        const city = String(r[4] || '').trim().toUpperCase();
+        const blockId = String(getCurrentBlockForAwb(awb, cons) || '').toUpperCase();
+
+        let score = 0;
+        if (digits.length > 0) {
+          if (awb === digits) score = 1000;
+          else if (awb.startsWith(digits)) score = 500 + digits.length;
+          else if (awb.endsWith(digits)) score = 450 + digits.length;
+          else if (awb.includes(digits)) score = 300 + digits.length;
+          else if (cons.includes(digits)) score = 150 + digits.length;
+        }
+        if (score === 0 && upper.length >= 2) {
+          if (blockId.includes(upper) || destLoc.includes(upper)) score = 220;
+          else if (city.includes(upper) || recip.includes(upper)) score = 180;
+          else if (cons.toUpperCase().includes(upper)) score = 140;
+        }
+        if (score > 0) {
+          scored.push({ row: r, awb, cons, destLoc, recip, city, blockId, score });
+        }
+      }
+      scored.sort((a, b) => b.score - a.score || a.awb.localeCompare(b.awb));
+      return scored.slice(0, 10);
+    }
+
+    function closeQuickAwbDropdown() {
+      const dd = document.getElementById('quickAwbSuggestionsDropdown');
+      if (dd) dd.classList.add('hidden');
+      _quickAwbHighlightIdx = -1;
+    }
+
+    function selectQuickAwbSuggestion(awb) {
+      const inp = document.getElementById('quickAwbInput');
+      if (inp) inp.value = awb;
+      closeQuickAwbDropdown();
+      previewQuickAwb(awb, true);
+    }
+
+    function handleQuickAwbKeydown(e) {
+      const dd = document.getElementById('quickAwbSuggestionsDropdown');
+      const isOpen = dd && !dd.classList.contains('hidden') && _quickAwbCurrentMatches.length > 0;
+      if (e.key === 'Escape') {
+        closeQuickAwbDropdown();
+        return;
+      }
+      if (!isOpen) {
+        if (e.key === 'Enter' && _quickAwbCurrentMatches.length === 1) {
+          e.preventDefault();
+          selectQuickAwbSuggestion(_quickAwbCurrentMatches[0].awb);
+        }
+        return;
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        _quickAwbHighlightIdx = (_quickAwbHighlightIdx + 1) % _quickAwbCurrentMatches.length;
+        renderQuickAwbDropdownItems(document.getElementById('quickAwbInput')?.value || '');
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        _quickAwbHighlightIdx = (_quickAwbHighlightIdx - 1 + _quickAwbCurrentMatches.length) % _quickAwbCurrentMatches.length;
+        renderQuickAwbDropdownItems(document.getElementById('quickAwbInput')?.value || '');
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const pick = _quickAwbCurrentMatches[_quickAwbHighlightIdx >= 0 ? _quickAwbHighlightIdx : 0];
+        if (pick) selectQuickAwbSuggestion(pick.awb);
+      }
+    }
+
+    function renderQuickAwbDropdownItems(rawVal) {
+      const dd = document.getElementById('quickAwbSuggestionsDropdown');
+      if (!dd) return;
+      const digits = String(rawVal || '').replace(/\D/g, '');
+      if (_quickAwbCurrentMatches.length === 0) {
+        dd.classList.add('hidden');
+        return;
+      }
+      dd.innerHTML = _quickAwbCurrentMatches.map((m, idx) => {
+        const r = m.row;
+        const isRec = state.recusas.includes(m.awb);
+        const isDg = isAwbActiveDg(m.awb);
+        const isFora = state.foraDoVoo.includes(m.awb);
+        const statusBadge = isRec
+          ? '<span class="px-1.5 py-0.5 rounded bg-yellow-300 text-yellow-950 text-[10px] font-bold">RECUSADA</span>'
+          : isDg
+            ? '<span class="px-1.5 py-0.5 rounded bg-red-600 text-white text-[10px] font-bold">DG</span>'
+            : isFora
+              ? '<span class="px-1.5 py-0.5 rounded bg-neutral-400 text-neutral-950 text-[10px] font-bold">FORA</span>'
+              : '<span class="px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 text-[10px] font-bold">NORMAL</span>';
+        const activeRowCls = idx === _quickAwbHighlightIdx
+          ? 'bg-purple-50 dark:bg-purple-900/30'
+          : 'hover:bg-slate-50 dark:hover:bg-slate-700/50';
+        return `
+          <div onmousedown="selectQuickAwbSuggestion('${m.awb}')" class="px-3.5 py-2.5 cursor-pointer transition flex items-center justify-between gap-2 text-xs ${activeRowCls}">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-mono font-bold text-slate-900 dark:text-white text-xs">${highlightAwbDigits(m.awb, digits)}</span>
+                <span class="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-700 dark:text-purple-300 font-bold text-[10px]">${m.blockId || m.destLoc}</span>
+                <span class="text-[11px] font-semibold text-slate-600 dark:text-slate-300">${r[5]} kg</span>
+                <span class="text-[11px] font-mono text-slate-400">CONS ${m.cons}</span>
+              </div>
+              <div class="text-[11px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                ${r[3] || '—'} (${r[4] || m.destLoc})
+              </div>
+            </div>
+            <div class="flex items-center gap-1.5 shrink-0">
+              ${statusBadge}
+              <span class="text-purple-600 dark:text-purple-400 font-bold text-xs">Selecionar →</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+      dd.classList.remove('hidden');
+    }
+
+    document.addEventListener('click', (e) => {
+      const wrap = document.getElementById('quickAwbSearchWrap');
+      if (wrap && !wrap.contains(e.target)) {
+        closeQuickAwbDropdown();
+      }
+    });
+
+    function previewQuickAwb(val, suppressDropdown = false) {
+      const raw = String(val || '').trim();
+      const clean = raw.replace(/\D/g, '');
       const card = document.getElementById('quickAwbPreviewCard');
       if (!card) return;
-      if (clean.length !== 12) {
-        card.innerHTML = 'Digite uma AWB de 12 dígitos para visualizar detalhes e alternar estados.';
+
+      if (!raw) {
+        _quickAwbCurrentMatches = [];
+        closeQuickAwbDropdown();
+        card.innerHTML = 'Digite uma AWB acima (ou parte dos dígitos, destino ou destinatário) para buscar sugestões e alternar <strong>Recusa</strong>, <strong>DG</strong> ou <strong>Fora do Voo</strong>.';
         return;
       }
-      const row = state.report.find(r => String(r[0]) === clean);
-      if (!row) {
-        card.innerHTML = `<span class="text-rose-600 dark:text-rose-400 font-bold">AWB ${clean} não encontrada no Relatório atual.</span>`;
+
+      const exactRow = clean.length === 12 ? state.report.find(r => String(r[0]) === clean) : null;
+      if (!exactRow) {
+        const matches = findQuickAwbSuggestions(raw);
+        _quickAwbCurrentMatches = matches;
+        _quickAwbHighlightIdx = matches.length > 0 ? 0 : -1;
+        if (!suppressDropdown && matches.length > 0) {
+          renderQuickAwbDropdownItems(raw);
+        } else {
+          closeQuickAwbDropdown();
+        }
+
+        if (clean.length === 12 && matches.length === 0) {
+          card.innerHTML = `<span class="text-rose-600 dark:text-rose-400 font-bold">AWB ${clean} não encontrada no Relatório atual.</span>`;
+          return;
+        }
+
+        if (matches.length === 0) {
+          card.innerHTML = `<span class="text-slate-500 dark:text-slate-400">Nenhuma AWB encontrada para "<b>${raw.replace(/[<>&"']/g, '')}</b>" no Relatório atual.</span>`;
+          return;
+        }
+
+        card.innerHTML = `
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-[11px] font-bold text-purple-600 dark:text-purple-400">
+              <span>💡 Sugestões encontradas (${matches.length}) — clique na AWB para selecionar:</span>
+              <span class="text-[10px] font-normal text-slate-400">Enter seleciona a 1ª</span>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-44 overflow-y-auto scrollbar-thin pr-1">
+              ${matches.map(m => {
+                const r = m.row;
+                const isRec = state.recusas.includes(m.awb);
+                const isDg = isAwbActiveDg(m.awb);
+                const isFora = state.foraDoVoo.includes(m.awb);
+                const pill = isRec ? '<span class="px-1.5 py-0.5 rounded bg-yellow-300 text-yellow-950 text-[9px] font-bold">REC</span>'
+                  : isDg ? '<span class="px-1.5 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold">DG</span>'
+                  : isFora ? '<span class="px-1.5 py-0.5 rounded bg-neutral-400 text-neutral-950 text-[9px] font-bold">FORA</span>'
+                  : '';
+                return `
+                  <button type="button" onclick="selectQuickAwbSuggestion('${m.awb}')" class="text-left p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-500 transition flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <span class="font-mono font-bold text-xs text-slate-900 dark:text-white">${highlightAwbDigits(m.awb, clean)}</span>
+                        <span class="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-700 dark:text-purple-300 font-bold text-[10px]">${m.blockId || m.destLoc}</span>
+                        ${pill}
+                      </div>
+                      <div class="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">${r[3] || '—'} · <b>${r[5]} kg</b></div>
+                    </div>
+                    <span class="text-purple-600 dark:text-purple-400 font-bold text-xs shrink-0">→</span>
+                  </button>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        `;
         return;
       }
+
+      closeQuickAwbDropdown();
+      const row = exactRow;
       const isRec = state.recusas.includes(clean);
       const isDg = isAwbActiveDg(clean);
       const isFora = state.foraDoVoo.includes(clean);
