@@ -1443,12 +1443,15 @@
     // BUSINESS RULES HELPERS
     // =========================================================================
     function determineBlockId(dest, tipo) {
-      const d = String(dest || '').trim().toUpperCase();
+      const raw = String(dest || '').trim().toUpperCase();
+      const d = (typeof AIR_DEST_CANONICAL_MAP !== 'undefined' && AIR_DEST_CANONICAL_MAP[raw]) ? AIR_DEST_CANONICAL_MAP[raw] : raw;
       const t = String(tipo || '').trim().toUpperCase();
-      if (d === 'BSBA') return t === 'SACA' ? 'BRASILIA_SACA' : 'BRASILIA_CAIXAS';
-      if (d === 'FORA') return t === 'FORMAL' ? 'FORTALEZA_FORMAL' : 'FORTALEZA_NORMAL';
-      if (d === 'JPAA' || d === 'JPA VIA REC') return 'JOAO_PESSOA_VIA_RECIFE';
-      if (d === 'ITNA' || d === 'ITN/IOS/TXT') return 'ITN_IOS_TXT';
+      if (d === 'BSBA' || d === 'BSB') return t === 'SACA' ? 'BRASILIA_SACA' : 'BRASILIA_CAIXAS';
+      if (d === 'FORA' || d === 'FOR') return t === 'FORMAL' ? 'FORTALEZA_FORMAL' : 'FORTALEZA_NORMAL';
+      if (d === 'JPAA' || d === 'JPA' || d === 'JPA VIA REC') return 'JOAO_PESSOA_VIA_RECIFE';
+      if (d === 'ITNA' || d === 'ITN' || d === 'ITN/IOS/TXT') return 'ITN_IOS_TXT';
+      if (d === 'SSA') return 'SSAA';
+      if (d === 'VDC') return 'VDCA';
       return d;
     }
 
@@ -7591,36 +7594,67 @@
     // FILE IMPORTERS & AWESOMEAPI COMMERCIAL EXCHANGE RATES (ITEM 26)
     // =========================================================================
     // Mapa canônico de todos os destinos aéreos operacionais da malha (para reconhecimento em CONS e na coluna Description do DELIVERY)
+    // Tabela oficial de conexões aéreas da operação (Estação Dest Loc -> Hub Aéreo de Embarque)
+    const OFFICIAL_HUB_CONNECTIONS_BY_DEST = {
+      'MCZA': ['APQA', 'APQ'],
+      'SLZA': ['PHIA', 'PHI'],
+      'THEA': ['PCSA', 'PCS'],
+      'FORA': ['RUXA', 'PHBA', 'RUX', 'PHB'],
+      'RECA': ['CAUA', 'PAVA', 'PNZX', 'CAU', 'PAV'],
+      'VIXA': ['QCHA', 'SBJA', 'QCH', 'SBJ'],
+      'SSAA': ['FECA', 'FEC'],
+      'PMWA': ['AUXA', 'GRPA', 'AUX', 'GRP'],
+      'JPAA': ['CJZA', 'CPVA', 'CJZ', 'CPV'],
+      'ITNA': ['BPSA', 'TXF', 'TXFA', 'TXT', 'TXTA', 'BPS', 'IOS', 'IOSA', 'ITN'],
+      'NATA': ['MVF', 'MVFA']
+    };
+
+    const CONNECTION_LOC_TO_HUB_MAP = (() => {
+      const m = {};
+      for (const [hub, conns] of Object.entries(OFFICIAL_HUB_CONNECTIONS_BY_DEST)) {
+        for (const c of conns) {
+          m[c] = hub;
+        }
+      }
+      return m;
+    })();
+
+    function getConnectionParentHub(rawLoc) {
+      const clean = String(rawLoc || '').trim().toUpperCase();
+      if (!clean) return null;
+      return CONNECTION_LOC_TO_HUB_MAP[clean] || null;
+    }
+
     const AIR_DEST_CANONICAL_MAP = {
-      'IMPA': 'IMPA',
-      'MCZA': 'MCZA',
-      'MCPA': 'MCPA',
-      'SLZA': 'SLZA',
-      'THEA': 'THEA',
-      'FORA': 'FORA', 'FOR': 'FORA',
-      'AJUA': 'AJUA',
-      'BVBA': 'BVBA',
-      'MAOA': 'MAOA',
-      'RECA': 'RECA',
-      'VIXA': 'VIXA',
+      'IMPA': 'IMPA', 'IMP': 'IMPA',
+      'MCZA': 'MCZA', 'MCZ': 'MCZA', 'APQA': 'MCZA', 'APQ': 'MCZA',
+      'MCPA': 'MCPA', 'MCP': 'MCPA',
+      'SLZA': 'SLZA', 'SLZ': 'SLZA', 'PHIA': 'SLZA', 'PHI': 'SLZA',
+      'THEA': 'THEA', 'THE': 'THEA', 'PCSA': 'THEA', 'PCS': 'THEA',
+      'FORA': 'FORA', 'FOR': 'FORA', 'RUXA': 'FORA', 'RUX': 'FORA', 'PHBA': 'FORA', 'PHB': 'FORA',
+      'AJUA': 'AJUA', 'AJU': 'AJUA',
+      'BVBA': 'BVBA', 'BVB': 'BVBA',
+      'MAOA': 'MAOA', 'MAO': 'MAOA',
+      'RECA': 'RECA', 'REC': 'RECA', 'CAUA': 'RECA', 'CAU': 'RECA', 'PAVA': 'RECA', 'PAV': 'RECA', 'PNZX': 'RECA',
+      'VIXA': 'VIXA', 'VIX': 'VIXA', 'QCHA': 'VIXA', 'QCH': 'VIXA', 'SBJA': 'VIXA', 'SBJ': 'VIXA',
       'CGBA': 'CGBA', 'CGB': 'CGBA',
       'CGRA': 'CGRA', 'CGR': 'CGRA',
-      'BELA': 'BELA',
-      'PNZA': 'PNZA',
-      'SSAA': 'SSAA',
-      'JDOA': 'JDOA',
-      'PMWA': 'PMWA',
-      'RBRA': 'RBRA',
-      'JPAA': 'JPAA', 'JPA': 'JPAA', 'JPA VIA REC': 'JPAA', 'JOAO_PESSOA_VIA_RECIFE': 'JPAA',
-      'ITNA': 'ITNA', 'ITN': 'ITNA', 'IOS': 'ITNA', 'ITN/IOS/TXT': 'ITNA', 'ITN_IOS_TXT': 'ITNA',
+      'BELA': 'BELA', 'BEL': 'BELA',
+      'PNZA': 'PNZA', 'PNZ': 'PNZA',
+      'SSAA': 'SSAA', 'SSA': 'SSAA', 'FECA': 'SSAA', 'FEC': 'SSAA',
+      'JDOA': 'JDOA', 'JDO': 'JDOA',
+      'PMWA': 'PMWA', 'PMW': 'PMWA', 'AUXA': 'PMWA', 'AUX': 'PMWA', 'GRPA': 'PMWA', 'GRP': 'PMWA',
+      'RBRA': 'RBRA', 'RBR': 'RBRA',
+      'JPAA': 'JPAA', 'JPA': 'JPAA', 'JPA VIA REC': 'JPAA', 'JPAA VIA RECA': 'JPAA', 'JOAO_PESSOA_VIA_RECIFE': 'JPAA', 'CJZA': 'JPAA', 'CJZ': 'JPAA', 'CPVA': 'JPAA', 'CPV': 'JPAA',
+      'ITNA': 'ITNA', 'ITN': 'ITNA', 'IOS': 'ITNA', 'IOSA': 'ITNA', 'BPSA': 'ITNA', 'BPS': 'ITNA', 'TXF': 'ITNA', 'TXFA': 'ITNA', 'TXT': 'ITNA', 'TXTA': 'ITNA', 'ITN/IOS/TXT': 'ITNA', 'ITN_IOS_TXT': 'ITNA',
       'PVHA': 'PVHA', 'PVH': 'PVHA',
-      'NATA': 'NATA',
+      'NATA': 'NATA', 'NAT': 'NATA', 'MVF': 'NATA', 'MVFA': 'NATA',
       'BSBA': 'BSBA', 'BSB': 'BSBA',
-      'STMA': 'STMA',
-      'MABA': 'MABA',
-      'VDCA': 'VDCA',
-      'GYNA': 'GYNA',
-      'BRAA': 'BRAA'
+      'STMA': 'STMA', 'STM': 'STMA',
+      'MABA': 'MABA', 'MAB': 'MABA',
+      'VDCA': 'VDCA', 'VDC': 'VDCA',
+      'GYNA': 'GYNA', 'GYN': 'GYNA',
+      'BRAA': 'BRAA', 'BRA': 'BRAA'
     };
 
     function resolveAirDestinationFromDescription(descRaw) {
@@ -8049,20 +8083,21 @@
     ];
 
     function normalizeDestClusterForAudit(destCode) {
-      const d = String(destCode || '').trim().toUpperCase();
-      if (!d) return '';
-      if (['ITNA', 'ITN', 'IOSA', 'IOS', 'BPSA', 'BPS', 'TXTA', 'TXT', 'TXFA', 'ITN/IOS/TXT', 'ITN_IOS_TXT'].includes(d)) return 'CLUSTER_ITN';
-      if (['JPAA', 'JPA', 'CPVA', 'CPV', 'JPA VIA REC', 'JOAO_PESSOA_VIA_RECIFE'].includes(d)) return 'CLUSTER_JPA';
+      const raw = String(destCode || '').trim().toUpperCase();
+      if (!raw) return '';
+      const parentHub = getConnectionParentHub(raw);
+      const d = parentHub || raw;
+      if (['ITNA', 'ITN', 'IOSA', 'IOS', 'BPSA', 'BPS', 'TXF', 'TXTA', 'TXT', 'TXFA', 'ITN/IOS/TXT', 'ITN_IOS_TXT'].includes(d)) return 'CLUSTER_ITN';
+      if (['JPAA', 'JPA', 'CJZA', 'CJZ', 'CPVA', 'CPV', 'JPA VIA REC', 'JPAA VIA RECA', 'JOAO_PESSOA_VIA_RECIFE'].includes(d)) return 'CLUSTER_JPA';
       if (['BSBA', 'BSB', 'BRASILIA_SACA', 'BRASILIA_CAIXAS'].includes(d)) return 'CLUSTER_BSB';
-      if (['FORA', 'FOR', 'FORTALEZA_NORMAL', 'FORTALEZA_FORMAL'].includes(d)) return 'CLUSTER_FOR';
+      if (['FORA', 'FOR', 'RUXA', 'RUX', 'PHBA', 'PHB', 'FORTALEZA_NORMAL', 'FORTALEZA_FORMAL'].includes(d)) return 'CLUSTER_FOR';
       if (/^[A-Z]{3}A$/.test(d)) return d.slice(0, 3);
       return d;
     }
 
-    // Fiel à função DestLocCompativelOperacao do VBA original:
-    // Estações regionais do interior (ex: FECA, QCHA, SBJA, PHBA, CAUA, APQA, AUXA, CPVA, TXFA, BPSA)
-    // consolidadas dentro da CONS de seu Hub NÃO são erro de destino.
-    // Só é "DESTINO INCORRETO" quando o Dest Loc é um OUTRO Hub Aéreo ativo na operação atual (ex: PVHA dentro de uma CONS de CGBA).
+    // Validação inteligente de compatibilidade entre Dest Loc da AWB e Destino da CONS:
+    // Leva em consideração a tabela oficial de conexões (MCZA<-APQA, SLZA<-PHIA, THEA<-PCSA, FORA<-RUXA/PHBA,
+    // RECA<-CAUA/PAVA/PNZX, VIXA<-QCHA/SBJA, SSAA<-FECA, PMWA<-AUXA/GRPA, JPAA<-CJZA/CPVA, ITNA<-BPSA/TXF, NATA<-MVF).
     function areDestLocAndConsCompatible(rawDestLoc, consObj) {
       if (!consObj) return true;
       const loc = String(rawDestLoc || '').trim().toUpperCase();
@@ -8074,18 +8109,26 @@
       if (cCluster && lCluster && cCluster === lCluster) return true;
       if (cCluster === 'CLUSTER_JPA' && (lCluster === 'REC' || lCluster === 'CLUSTER_JPA')) return true;
 
+      // Se 'loc' é uma estação de conexão oficial mapeada para outro Hub (ex: APQA -> MCZA, FECA -> SSAA, CAUA/PAVA/PNZX -> RECA, MVF -> NATA),
+      // mas está dentro de uma CONS de destino diferente do seu Hub de conexão, acusa divergência!
+      const mappedParentHub = getConnectionParentHub(loc);
+      if (mappedParentHub) {
+        const parentCluster = normalizeDestClusterForAudit(mappedParentHub);
+        if (parentCluster && parentCluster !== cCluster) {
+          return false;
+        }
+      }
+
       // Verifica se 'loc' é um dos outros 29 Hubs Aéreos Oficiais e se esse outro Hub está ativo nas CONS da operação
       const locAs4 = loc.length === 3 ? (loc + 'A') : loc;
       const isOfficialHub = OFFICIAL_AIR_HUBS_4.includes(locAs4);
       if (isOfficialHub) {
         const activeClustersInOp = new Set((state.cons || []).map(c => normalizeDestClusterForAudit(c.dest)));
         if (activeClustersInOp.has(lCluster)) {
-          // É de fato um outro Hub Aéreo da operação atual divergente do Hub da CONS!
           return false;
         }
       }
 
-      // Se for um código de 3 ou 4 letras de base regional do interior (não é outro Hub Aéreo ativo), é compatível!
       if (/^[A-Z]{3,4}$/.test(loc)) {
         return true;
       }
@@ -8344,6 +8387,8 @@
               sugestaoDest: cObj.dest
             });
           } else if (!areDestLocAndConsCompatible(rawLoc, cObj)) {
+            const parentHub = getConnectionParentHub(rawLoc);
+            const connExplain = parentHub ? ` [conexão oficial de ${parentHub}]` : '';
             pendencias.push({
               id: `PEND_DEST_${awb}`,
               tipo: 'DESTINO INCORRETO',
@@ -8361,8 +8406,8 @@
               val,
               curr,
               status: 'PENDENTE',
-              motivo: `Dest Loc da AWB no Report é "${rawLoc}" (${city || '—'}), mas ela está consolidada na CONS ${cons} de destino "${cObj.dest}".`,
-              sugestaoDest: cObj.dest
+              motivo: `Dest Loc da AWB no Report é "${rawLoc}"${connExplain} (${city || '—'}), mas ela está consolidada na CONS ${cons} de destino "${cObj.dest}".`,
+              sugestaoDest: parentHub || AIR_DEST_CANONICAL_MAP[rawLoc] || cObj.dest
             });
           }
         }
@@ -8535,6 +8580,8 @@
             if (loc && !areDestLocAndConsCompatible(loc, cObj) && !(state.movimentacoes && state.movimentacoes[awb])) {
               const pid = `PEND_DEST_${awb}`;
               if (!existingIds.has(pid)) {
+                const parentHub = getConnectionParentHub(loc);
+                const connExplain = parentHub ? ` [conexão oficial de ${parentHub}]` : '';
                 state.reportPendencias.push({
                   id: pid,
                   tipo: 'DESTINO INCORRETO',
@@ -8542,8 +8589,8 @@
                   linhaOrigem: idx + 2,
                   awb, cons, lacre, co, city, wt, rawWt: String(wt), destLoc: loc, consDest: cObj.dest, val, curr,
                   status: 'PENDENTE',
-                  motivo: `Dest Loc da AWB é "${loc}" (${city || '—'}), diferente do destino "${cObj.dest}" da CONS ${cons}.`,
-                  sugestaoDest: cObj.dest
+                  motivo: `Dest Loc da AWB é "${loc}"${connExplain} (${city || '—'}), diferente do destino "${cObj.dest}" da CONS ${cons}.`,
+                  sugestaoDest: parentHub || AIR_DEST_CANONICAL_MAP[loc] || cObj.dest
                 });
                 existingIds.add(pid);
               }
@@ -8892,11 +8939,15 @@
                 <button type="button" onclick="resolvePendenciaDestino('${p.id}', 'USE_CONS_DEST')" class="btn-web px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-2xs">
                   ✓ Assumir Destino da CONS (${p.consDest})
                 </button>
-                ${p.destLoc && p.destLoc !== 'VAZIO' ? `
+                ${p.destLoc && p.destLoc !== 'VAZIO' ? (() => {
+                  const parentHub = getConnectionParentHub(p.destLoc);
+                  const moveLabel = parentHub ? `${parentHub} (Conexão ${p.destLoc})` : (AIR_DEST_CANONICAL_MAP[p.destLoc] || p.destLoc);
+                  return `
                   <button type="button" onclick="resolvePendenciaDestino('${p.id}', 'MOVE_TO_REPORT_DEST')" class="btn-web px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs">
-                    ⇄ Mover AWB p/ Bloco ${p.destLoc}
+                    ⇄ Mover AWB p/ Bloco ${moveLabel}
                   </button>
-                ` : ''}
+                  `;
+                })() : ''}
                 <div class="flex items-center gap-1">
                   <select id="selFixDest_${p.id}" class="bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold">
                     ${destOptionsHtml(p.consDest || p.sugestaoDest)}
@@ -8995,7 +9046,7 @@
                   <span class="px-2.5 py-0.5 rounded-md text-[10px] font-extrabold uppercase tracking-wider ${typeBadgeCls}">${p.tipo}</span>
                   <span class="font-mono font-extrabold text-sm text-purple-700 dark:text-purple-300">AWB: ${p.awb}</span>
                   <span class="font-mono text-xs text-slate-600 dark:text-slate-300">CONS Report: <b>${p.cons}</b></span>
-                  <span class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">Dest Loc: ${p.destLoc || '—'}</span>
+                  <span class="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">Dest Loc: ${p.destLoc || '—'}${getConnectionParentHub(p.destLoc) ? ` <span class="ml-1 px-1.5 py-0.2 rounded bg-purple-500/15 text-purple-700 dark:text-purple-300 font-extrabold text-[10px]">🔗 Conexão → ${getConnectionParentHub(p.destLoc)}</span>` : ''}</span>
                   <span class="text-[11px] text-slate-400 font-mono">Linha Origem: #${p.linhaOrigem}</span>
                 </div>
                 <p class="text-xs font-semibold text-slate-800 dark:text-slate-200">${p.motivo}</p>
@@ -9014,14 +9065,34 @@
     function buildPendenciaConsOptionsByIataHtml(iataQuery, selectedCons = '') {
       const q = String(iataQuery || '').trim().toUpperCase();
       if (!q) {
-        return `<option value="">← Digite a IATA do destino para listar as CONS...</option>`;
+        if (selectedCons) {
+          const selObj = (state.cons || []).find(c => c.cons === selectedCons);
+          if (selObj) {
+            const seals = (state.lacres && state.lacres[selObj.cons] && state.lacres[selObj.cons].length > 0)
+              ? ` · Lacre ${state.lacres[selObj.cons].join(',')}`
+              : '';
+            return `<option value="${selObj.cons}" selected>★ Sugerida IA: ${selObj.cons} — ${selObj.dest} (${selObj.source === 'DELIVERY' ? 'DELIVERY' : selObj.tipo}${seals})</option>` +
+                   `<option value="">← Digite a IATA no filtro ao lado para listar outras CONS...</option>`;
+          }
+        }
+        return `<option value="">← Digite a IATA do destino ou conexão para listar as CONS...</option>`;
       }
+      const qCluster = normalizeDestClusterForAudit(q);
+      const qParentHub = getConnectionParentHub(q);
       const matches = (state.cons || []).filter(c => {
         const dest = String(c.dest || '').toUpperCase();
         const origDest = String(c.origDest || '').toUpperCase();
         const desc = String(c.desc || '').toUpperCase();
         const iata3 = dest.slice(0, 3);
-        return dest.includes(q) || origDest.includes(q) || iata3 === q.slice(0, 3) || desc.includes(q);
+        const cCluster = normalizeDestClusterForAudit(dest);
+        const connList = OFFICIAL_HUB_CONNECTIONS_BY_DEST[dest] || [];
+        return dest.includes(q) ||
+               origDest.includes(q) ||
+               iata3 === q.slice(0, 3) ||
+               desc.includes(q) ||
+               (qCluster && cCluster === qCluster && q.length >= 3) ||
+               (qParentHub && dest === qParentHub) ||
+               connList.some(cn => cn.includes(q));
       });
       if (matches.length === 0) {
         return `<option value="">Nenhuma CONS encontrada para "${q}"</option>`;
@@ -12502,8 +12573,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         const reasons = [];
         const cCluster = normalizeDestClusterForAudit(c.dest);
 
-        // 1. Destino IATA / Cidade
-        if (targetCluster && cCluster === targetCluster) {
+        // 1. Destino IATA / Conexão Oficial da Malha / Cidade
+        const parentHubFromConn = getConnectionParentHub(p.destLoc);
+        if (parentHubFromConn && normalizeDestClusterForAudit(parentHubFromConn) === cCluster) {
+          score += 56;
+          reasons.push(`Conexão oficial ${p.destLoc} → ${c.dest}`);
+        } else if (targetCluster && cCluster === targetCluster) {
           score += 52;
           reasons.push(`Destino ${c.dest} compatível`);
         } else if (p.destLoc && String(c.dest).toUpperCase().startsWith(String(p.destLoc).slice(0, 3).toUpperCase())) {
