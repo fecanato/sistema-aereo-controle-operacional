@@ -959,7 +959,7 @@
 
     const PRACA_FRIENDLY_NAMES = {
       'AJUA': 'Aracaju', 'BELA': 'Belém', 'BRAA': 'Barreiras',
-      'BRASILIA_SACA': 'Brasília Saca', 'BRASILIA_CAIXAS': 'Brasília Caixa',
+      'BSBA': 'Brasília', 'BRASILIA_SACA': 'Brasília Saca', 'BRASILIA_CAIXAS': 'Brasília Caixa',
       'BVBA': 'Boa Vista', 'CGBA': 'Cuiabá', 'CGRA': 'Campo Grande',
       'FORTALEZA_NORMAL': 'Fortaleza', 'FORTALEZA_FORMAL': 'Fortaleza (Formal)',
       'GYNA': 'Goiânia', 'IMPA': 'Imperatriz', 'ITN_IOS_TXT': 'ITN/IOS/TXT',
@@ -1461,10 +1461,11 @@
       if (id === 'BRASILIA_CAIXAS') return 'BSBA CAIXAS';
       if (id === 'FORTALEZA_NORMAL') return 'FORA';
       if (id === 'FORTALEZA_FORMAL') return 'FORA FORMAL';
-      if (id === 'BRASILIA_SACA|DG') return 'BSBA SACA DG';
-      if (id === 'BRASILIA_CAIXAS|DG') return 'BSBA CAIXAS DG';
+      if (id === 'BSBA|DG' || id === 'BRASILIA_SACA|DG' || id === 'BRASILIA_CAIXAS|DG') return 'BSBA DG';
       if (id === 'FORTALEZA_FORMAL|DG') return 'FORA FORMAL DG';
-      return String(mainDest || '').trim();
+      const destClean = String(mainDest || '').trim();
+      if (/^BSBA\s+(?:CAIXAS?|SACAS?)\s+DG$/i.test(destClean)) return 'BSBA DG';
+      return destClean;
     }
 
     function getCurrentBlockForCons(consObj) {
@@ -1472,6 +1473,14 @@
         return state.movimentacoes[consObj.cons];
       }
       return determineBlockId(consObj.dest, consObj.tipo);
+    }
+
+    function normalizeDgBaseId(rawBaseId) {
+      const id = String(rawBaseId || '').replace(/\|(DG|PALLET)$/i, '').trim().toUpperCase();
+      if (id === 'BRASILIA_SACA' || id === 'BRASILIA_CAIXAS' || id === 'BRASILIA_CAIXA' || id === 'BSBA' || id === 'BSB' || id === 'BSBA SACA' || id === 'BSBA SACAS' || id === 'BSBA CAIXAS' || id === 'BSBA CAIXA' || id === 'BSBA DG') {
+        return 'BSBA';
+      }
+      return id || 'VIXA';
     }
 
     function normalizePalletBaseId(rawBaseId) {
@@ -1519,7 +1528,11 @@
       }
       if (state.movimentacoes && state.movimentacoes[cleanAwb]) {
         const base = state.movimentacoes[cleanAwb];
-        return activeDg ? (base.endsWith('|DG') ? base : base + '|DG') : base.replace(/\|DG$/i, '');
+        if (activeDg) {
+          return normalizeDgBaseId(base) + '|DG';
+        }
+        const stripped = base.replace(/\|DG$/i, '');
+        return stripped === 'BSBA' ? 'BRASILIA_CAIXAS' : stripped;
       }
       const cObj = state.cons.find(c => c.cons === consStr);
       let baseId = 'VIXA';
@@ -1534,13 +1547,62 @@
         }
       }
       if (activeDg) {
-        return baseId.endsWith('|DG') ? baseId : baseId + '|DG';
+        return normalizeDgBaseId(baseId) + '|DG';
       }
-      return baseId.replace(/\|DG$/i, '');
+      const stripped = baseId.replace(/\|DG$/i, '');
+      return stripped === 'BSBA' ? 'BRASILIA_CAIXAS' : stripped;
+    }
+
+    function migrateLegacyBrasiliaDgState() {
+      const legacyIds = ['BRASILIA_CAIXAS|DG', 'BRASILIA_SACA|DG'];
+      if (state.movimentacoes && typeof state.movimentacoes === 'object') {
+        for (const [k, v] of Object.entries(state.movimentacoes)) {
+          if (legacyIds.includes(String(v || '').toUpperCase())) {
+            state.movimentacoes[k] = 'BSBA|DG';
+          }
+        }
+      }
+      if (state.ctes && typeof state.ctes === 'object') {
+        for (const legId of legacyIds) {
+          if (state.ctes[legId]) {
+            if (!state.ctes['BSBA|DG']) state.ctes['BSBA|DG'] = state.ctes[legId];
+            delete state.ctes[legId];
+          }
+        }
+      }
+      if (state.preAlertaConcluido && typeof state.preAlertaConcluido === 'object') {
+        for (const legId of legacyIds) {
+          if (state.preAlertaConcluido[legId]) {
+            state.preAlertaConcluido['BSBA|DG'] = true;
+            delete state.preAlertaConcluido[legId];
+          }
+        }
+      }
+      if (state.pesosAppByBlock && typeof state.pesosAppByBlock === 'object') {
+        for (const legId of legacyIds) {
+          if (state.pesosAppByBlock[legId]) {
+            if (!state.pesosAppByBlock['BSBA|DG']) {
+              state.pesosAppByBlock['BSBA|DG'] = state.pesosAppByBlock[legId];
+            } else {
+              const dst = state.pesosAppByBlock['BSBA|DG'];
+              const src = state.pesosAppByBlock[legId];
+              dst.dgVol = Number(dst.dgVol || 0) + Number(src.dgVol || 0);
+              dst.dgKg = Number(dst.dgKg || 0) + Number(src.dgKg || 0);
+              dst.totalVol = Number(dst.totalVol || 0) + Number(src.totalVol || 0);
+              dst.totalKg = Number(dst.totalKg || 0) + Number(src.totalKg || 0);
+              if (Array.isArray(src.logs)) {
+                dst.logs = (Array.isArray(dst.logs) ? dst.logs : []).concat(src.logs);
+              }
+            }
+            delete state.pesosAppByBlock[legId];
+          }
+        }
+      }
     }
 
     function syncDgBlocksStructure() {
       if (!state.pallets) state.pallets = {};
+      migrateLegacyBrasiliaDgState();
       const dgGroups = {};
       const palletGroups = {};
       const consMap = new Map(state.cons.map(c => [c.cons, c]));
@@ -1560,7 +1622,7 @@
           }
         } else if (isAwbActiveDg(awb)) {
           const fullBlockId = getCurrentBlockForAwb(awb, cons);
-          const baseId = String(fullBlockId || 'VIXA').replace(/\|(DG|PALLET)$/i, '');
+          const baseId = normalizeDgBaseId(fullBlockId);
           if (!dgGroups[baseId]) dgGroups[baseId] = [];
           if (!dgGroups[baseId].includes(awb)) {
             dgGroups[baseId].push(awb);
@@ -1584,16 +1646,21 @@
       const existingPalletMap = new Map(state.blocks.filter(b => String(b.id).endsWith('|PALLET')).map(b => [b.id, b]));
 
       const newDgBlocks = [];
-      for (const [baseId, awbs] of Object.entries(dgGroups)) {
+      for (const [rawBaseId, awbs] of Object.entries(dgGroups)) {
+        const baseId = normalizeDgBaseId(rawBaseId);
         const dgId = baseId + '|DG';
-        const baseBlock = nonSpecial.find(b => b.id === baseId) || { orig: 'GRU', cia: 'LATAM', dest: baseId };
-        const prev = existingDgMap.get(dgId);
+        const baseBlock = nonSpecial.find(b => b.id === baseId)
+          || (baseId === 'BSBA' ? (nonSpecial.find(b => b.id === 'BRASILIA_CAIXAS' || b.id === 'BRASILIA_SACA') || { orig: 'CGH', cia: 'LATAM', dest: 'BSBA' }) : null)
+          || { orig: 'GRU', cia: 'LATAM', dest: baseId };
+        const prev = existingDgMap.get(dgId)
+          || (baseId === 'BSBA' ? (existingDgMap.get('BRASILIA_CAIXAS|DG') || existingDgMap.get('BRASILIA_SACA|DG')) : null);
         const activeCount = awbs.filter(a => !state.recusas.includes(a) && !state.foraDoVoo.includes(a)).length;
+        const dgDestLabel = baseId === 'BSBA' ? 'BSBA DG' : (String(baseBlock.dest || baseId).replace(/\s+DG$/i, '') + ' DG');
         newDgBlocks.push({
           id: dgId,
           orig: prev ? prev.orig : baseBlock.orig,
           cia: prev ? prev.cia : baseBlock.cia,
-          dest: baseBlock.dest + ' DG',
+          dest: dgDestLabel,
           tipo: 'DG',
           awbAereo: prev ? prev.awbAereo : '',
           vol: activeCount,
@@ -6866,7 +6933,7 @@
               state.dgs.push(cleanAwb);
               dgInserted++;
             }
-            const baseId = mapGestaoPesosDestToBlockId(destRaw, 'CAIXA');
+            const baseId = normalizeDgBaseId(mapGestaoPesosDestToBlockId(destRaw, 'CAIXA'));
             const dgBlockId = baseId + '|DG';
             pesoByBlock[dgBlockId] = (pesoByBlock[dgBlockId] || 0) + kg;
             const st = ensureAppStat(dgBlockId);
@@ -7125,8 +7192,14 @@
           { header: 'Valor', key: 'valor', width: 15 }
         ];
         ws.getRow(1).font = { bold: true };
+        const seenBlockAwbs = new Set();
+        const uniqueAwbs = [];
         for (const item of awbs) {
-          const row = ws.addRow(['000', item.awb, '00', dateFormatted, item.valBrl]);
+          const numLimpo = String(item.awb || '').replace(/\D/g, '');
+          if (!numLimpo || seenBlockAwbs.has(numLimpo)) continue;
+          seenBlockAwbs.add(numLimpo);
+          uniqueAwbs.push({ ...item, awb: numLimpo });
+          const row = ws.addRow(['000', numLimpo, '00', dateFormatted, item.valBrl]);
           row.getCell(5).numFmt = '0.00';
         }
         const buf = await wb.xlsx.writeBuffer();
@@ -7137,9 +7210,9 @@
         minutasFilesMeta[blockId] = {
           fileName,
           emissao: dateFormatted,
-          awbsCount: awbs.length,
+          awbsCount: uniqueAwbs.length,
           doc_excel_b64: dataUri,
-          items: awbs.map(x => ({ serie: '000', numero: x.awb, docFiscal: '00', emissao: dateFormatted, valor: x.valBrl }))
+          items: uniqueAwbs.map(x => ({ serie: '000', numero: x.awb, docFiscal: '00', emissao: dateFormatted, valor: x.valBrl }))
         };
       }
 
@@ -9997,7 +10070,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           );
           let blockId = mapGestaoPesosDestToBlockId(destRaw, isSaca ? 'SACA' : 'CAIXA');
           if (isPallet) blockId = normalizePalletBaseId(blockId) + '|PALLET';
-          else if (tipoRaw === 'DG') blockId = blockId + '|DG';
+          else if (tipoRaw === 'DG') blockId = normalizeDgBaseId(blockId) + '|DG';
 
           if (!appMap[blockId]) continue;
           if (!Array.isArray(appMap[blockId].logs)) appMap[blockId].logs = [];
@@ -12335,7 +12408,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               state.dgs.push(cleanAwb);
               dgInserted++;
             }
-            const baseId = mapGestaoPesosDestToBlockId(destRaw, 'CAIXA');
+            const baseId = normalizeDgBaseId(mapGestaoPesosDestToBlockId(destRaw, 'CAIXA'));
             const dgBlockId = baseId + '|DG';
             pesoByBlock[dgBlockId] = (pesoByBlock[dgBlockId] || 0) + kg;
             const st = ensureAppStat(dgBlockId);
@@ -12454,7 +12527,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
           const isDeliv = (tipoRaw === 'DELIVERY');
           const isComail = (tipoRaw === 'COMAIL');
           const bid = (tipoRaw === 'DG')
-            ? (mapGestaoPesosDestToBlockId(destRaw, 'CAIXA') + '|DG')
+            ? (normalizeDgBaseId(mapGestaoPesosDestToBlockId(destRaw, 'CAIXA')) + '|DG')
             : mapGestaoPesosDestToBlockId(destRaw, isSaca ? 'SACA' : 'CAIXA');
 
           pesoByBlock[bid] = (pesoByBlock[bid] || 0) + kg;
