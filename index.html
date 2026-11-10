@@ -229,11 +229,17 @@
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Criar Senha</label>
-            <input type="password" id="ctrlAuthNewPass" placeholder="Mín. 3 caracteres" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            <div class="relative">
+              <input type="password" id="ctrlAuthNewPass" placeholder="Mín. 3 caracteres" class="w-full px-3.5 py-2.5 pr-9 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              <button type="button" onclick="toggleCtrlPassVisibility('ctrlAuthNewPass')" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold">👁</button>
+            </div>
           </div>
           <div>
             <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">Confirmar Senha</label>
-            <input type="password" id="ctrlAuthConfPass" onkeydown="if(event.key==='Enter') submitCtrlFirstAccess()" placeholder="Repita a senha" class="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500" />
+            <div class="relative">
+              <input type="password" id="ctrlAuthConfPass" onkeydown="if(event.key==='Enter') submitCtrlFirstAccess()" placeholder="Repita a senha" class="w-full px-3.5 py-2.5 pr-9 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500" />
+              <button type="button" onclick="toggleCtrlPassVisibility('ctrlAuthConfPass')" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold">👁</button>
+            </div>
           </div>
         </div>
         <div>
@@ -1145,19 +1151,82 @@
     // =========================================================================
     // OPERATIONS CATALOG & 48H HISTORY SYSTEM (ITEMS 21, 22, 23, 25)
     // =========================================================================
+    function isOperationSnapshotEmpty(op) {
+      if (!op) return true;
+      const snap = op.snapshot || {};
+      const consCount = Array.isArray(snap.cons) ? snap.cons.length : 0;
+      const awbCount = Array.isArray(snap.report) ? snap.report.length : 0;
+      const dgCount = Array.isArray(snap.dgs) ? snap.dgs.length : 0;
+      const palCount = (snap.pallets && typeof snap.pallets === 'object') ? Object.keys(snap.pallets).length : 0;
+      return consCount === 0 && awbCount === 0 && dgCount === 0 && palCount === 0;
+    }
+
+    function deleteOperationFromSupabaseById(opId) {
+      if (!opId) return;
+      try {
+        fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?id=eq.__SYS_AEREO_OP__${encodeURIComponent(opId)}`, {
+          method: 'DELETE',
+          headers: {
+            apikey: MINUTAS_SUPABASE_KEY,
+            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`
+          }
+        }).catch(() => {});
+      } catch (e) {}
+    }
+
     function pruneExpiredHistory() {
       const now = Date.now();
+      // Identifica datas que já possuem operação com dados reais (CONS ou AWBs)
+      const datesWithRealData = new Set(
+        operationsCatalog
+          .filter(o => o && !isOperationSnapshotEmpty(o) && o.flightDate)
+          .map(o => o.flightDate)
+      );
+
+      const toDeleteRemote = [];
       operationsCatalog = operationsCatalog.filter(op => {
+        if (!op || !op.id) return false;
+        if (op.id === '20261030_225017_8953406' || op.flightDate === '2026-10-30') {
+          toDeleteRemote.push(op.id);
+          return false;
+        }
+        const empty = isOperationSnapshotEmpty(op);
+        // 1) Qualquer operação FINALIZADA vazia (0 CONS e 0 AWBs, como 03/11/2026 ou a duplicada vazia de 09/11/2026) é removida imediatamente
+        if (op.status === 'FINALIZADA' && empty) {
+          toDeleteRemote.push(op.id);
+          return false;
+        }
+        // 2) Se existe uma operação vazia para a mesma data de uma operação que já tem dados reais (ex: 09/11/2026), e não é a operação aberta na tela no momento, remove a duplicada vazia
+        if (empty && op.flightDate && datesWithRealData.has(op.flightDate) && op.id !== state.opId) {
+          toDeleteRemote.push(op.id);
+          return false;
+        }
         if (op.status !== 'FINALIZADA') return true;
-        const finTime = op.finalizedAt ? new Date(op.finalizedAt).getTime() : now;
-        return (now - finTime) <= FORTY_EIGHT_HOURS_MS;
+        // 3) Verifica expiração de 48h usando finalizedAt, createdAt ou flightDate
+        let finTime = now;
+        if (op.finalizedAt) {
+          const parsed = new Date(op.finalizedAt).getTime();
+          if (!isNaN(parsed)) finTime = parsed;
+        } else if (op.createdAt) {
+          const parsed = new Date(op.createdAt).getTime();
+          if (!isNaN(parsed)) finTime = parsed;
+        } else if (op.flightDate) {
+          const parsed = new Date(op.flightDate + 'T23:59:59').getTime();
+          if (!isNaN(parsed)) finTime = parsed;
+        }
+        const keep = (now - finTime) <= FORTY_EIGHT_HOURS_MS;
+        if (!keep) toDeleteRemote.push(op.id);
+        return keep;
       });
+
+      if (toDeleteRemote.length > 0) {
+        toDeleteRemote.forEach(id => deleteOperationFromSupabaseById(id));
+      }
     }
 
     function saveCatalogAndState() {
       pruneExpiredHistory();
-      if (state.opId) {
-        const idx = operationsCatalog.findIndex(o => o.id === state.opId);
+      if (state.opId && (currentScreen === 'workspace' || state.status === 'FINALIZADA')) {
         const entry = {
           id: state.opId,
           name: state.opName || `Operação ${formatDateBr(state.flightDate)}`,
@@ -1167,13 +1236,21 @@
           finalizedAt: state.finalizedAt || null,
           snapshot: JSON.parse(JSON.stringify(state))
         };
-        if (idx >= 0) operationsCatalog[idx] = entry;
-        else operationsCatalog.unshift(entry);
-        pushOperationToSupabase(entry);
+        if (entry.status === 'FINALIZADA' && isOperationSnapshotEmpty(entry)) {
+          operationsCatalog = operationsCatalog.filter(o => o.id !== entry.id);
+          deleteOperationFromSupabaseById(entry.id);
+        } else {
+          const idx = operationsCatalog.findIndex(o => o.id === state.opId);
+          if (idx >= 0) operationsCatalog[idx] = entry;
+          else operationsCatalog.unshift(entry);
+          pushOperationToSupabase(entry);
+        }
       }
       try {
         localStorage.setItem('fedex_sistema_aereo_ops_catalog_v3', JSON.stringify(operationsCatalog));
-        localStorage.setItem('fedex_sistema_aereo_web_v3', JSON.stringify(state));
+        if (state.opId) {
+          localStorage.setItem('fedex_sistema_aereo_web_v3', JSON.stringify(state));
+        }
       } catch (e) {}
     }
 
@@ -1183,7 +1260,6 @@
         if (rawCat) {
           const parsed = JSON.parse(rawCat);
           if (Array.isArray(parsed)) {
-            // Remove a operação de demonstração 30/10/2026 que havia sido gerada automaticamente
             operationsCatalog = parsed.filter(o => o && o.id !== '20261030_225017_8953406' && o.flightDate !== '2026-10-30');
             pruneExpiredHistory();
             try {
@@ -1199,12 +1275,14 @@
     let pushOpDebounceTimer = null;
     function pushOperationToSupabase(entry) {
       if (!entry || !entry.id) return;
+      if (entry.status === 'FINALIZADA' && isOperationSnapshotEmpty(entry)) return;
       if (pushOpDebounceTimer) clearTimeout(pushOpDebounceTimer);
-      pushOpDebounceTimer = setTimeout(() => executePushOperationToSupabase(entry), 2500);
+      pushOpDebounceTimer = setTimeout(() => executePushOperationToSupabase(entry), 1800);
     }
 
     async function executePushOperationToSupabase(entry) {
       if (!entry || !entry.id) return;
+      if (entry.status === 'FINALIZADA' && isOperationSnapshotEmpty(entry)) return;
       try {
         await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?on_conflict=id`, {
           method: 'POST',
@@ -1246,12 +1324,12 @@
         });
         if (res.ok) {
           const rows = await res.json();
-          if (Array.isArray(rows) && rows.length > 0) {
+          if (Array.isArray(rows)) {
             const map = new Map(operationsCatalog.map(o => [o.id, o]));
             for (const r of rows) {
               const d = r.dados || {};
               if (d.id && d.snapshot && d.id !== '20261030_225017_8953406' && d.flightDate !== '2026-10-30') {
-                map.set(d.id, {
+                const candidate = {
                   id: d.id,
                   name: d.name || r.operacao || `Operação ${formatDateBr(d.flightDate)}`,
                   flightDate: d.flightDate,
@@ -1259,7 +1337,13 @@
                   createdAt: d.createdAt,
                   finalizedAt: d.finalizedAt,
                   snapshot: d.snapshot
-                });
+                };
+                if (candidate.status === 'FINALIZADA' && isOperationSnapshotEmpty(candidate)) {
+                  map.delete(d.id);
+                  deleteOperationFromSupabaseById(d.id);
+                  continue;
+                }
+                map.set(d.id, candidate);
               }
             }
             operationsCatalog = Array.from(map.values());
@@ -1267,6 +1351,9 @@
         }
       } catch (e) {}
       pruneExpiredHistory();
+      try {
+        localStorage.setItem('fedex_sistema_aereo_ops_catalog_v3', JSON.stringify(operationsCatalog));
+      } catch (e) {}
       renderOperationsScreen();
     }
 
@@ -1404,8 +1491,8 @@
         const uAuth = ctrlUsuariosAuthDb[nome] || {};
         const temSenha = Boolean(uAuth.senha && String(uAuth.senha).trim().length > 0);
         const badge = temSenha
-          ? `<span class="px-2 py-0.5 rounded-full bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300 text-[10px] font-bold">Com senha</span>`
-          : `<span class="px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold">1º Acesso</span>`;
+          ? ''
+          : `<span class="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold">1º Acesso</span>`;
         return `
           <button type="button" onclick="selectCtrlUserLogin('${nome}')" class="w-full py-4 px-1 flex items-center justify-between hover:bg-slate-50/70 dark:hover:bg-slate-700/30 transition group text-left">
             <div class="flex items-center gap-3.5">
@@ -1423,6 +1510,7 @@
 
     function goToLoginScreenCtrl() {
       currentScreen = 'login';
+      state.opId = '';
       document.getElementById('screenLogin')?.classList.remove('hidden');
       document.getElementById('screenOperations')?.classList.add('hidden');
       document.getElementById('screenWorkspace')?.classList.add('hidden');
@@ -1458,11 +1546,10 @@
       el.classList.remove('hidden');
     }
 
-    window.selectCtrlUserLogin = async function(nome) {
+    window.selectCtrlUserLogin = function(nome) {
       const nomeUp = String(nome || '').trim().toUpperCase();
       if (!nomeUp) return;
       ctrlUsuarioSelecionadoModal = nomeUp;
-      await syncCtrlGlobalAuthFromSupabase();
 
       const defEmail = CTRL_DEFAULT_FEDEX_EMAILS[nomeUp] || '';
       const uAuth = ctrlUsuariosAuthDb[nomeUp] || { nome: nomeUp, senha: '', email: defEmail };
@@ -1478,13 +1565,15 @@
 
       if (!temSenha) {
         document.getElementById('ctrlAuthEyebrow').textContent = 'PRIMEIRO ACESSO — CRIAR SENHA';
-        document.getElementById('ctrlAuthNewPass').value = '';
-        document.getElementById('ctrlAuthConfPass').value = '';
+        const np = document.getElementById('ctrlAuthNewPass');
+        const cp = document.getElementById('ctrlAuthConfPass');
+        if (np) { np.type = 'password'; np.value = ''; }
+        if (cp) { cp.type = 'password'; cp.value = ''; }
         const inpEm = document.getElementById('ctrlAuthFirstEmail');
         if (inpEm) inpEm.value = uAuth.email || defEmail || '';
         document.getElementById('ctrlAuthStepFirst').classList.remove('hidden');
         document.getElementById('ctrlModalAuthGlobal').classList.remove('hidden');
-        setTimeout(() => document.getElementById('ctrlAuthNewPass')?.focus(), 60);
+        setTimeout(() => np?.focus(), 20);
       } else {
         document.getElementById('ctrlAuthEyebrow').textContent = 'SENHA DE ACESSO';
         const inp = document.getElementById('ctrlAuthInputSenha');
@@ -1492,8 +1581,10 @@
         inp.value = '';
         document.getElementById('ctrlAuthStepLogin').classList.remove('hidden');
         document.getElementById('ctrlModalAuthGlobal').classList.remove('hidden');
-        setTimeout(() => inp.focus(), 60);
+        setTimeout(() => inp.focus(), 20);
       }
+      // Sincroniza em background sem travar a abertura do modal
+      syncCtrlGlobalAuthFromSupabase();
     };
 
     window.closeCtrlAuthModal = function() {
@@ -1501,7 +1592,7 @@
       ctrlUsuarioSelecionadoModal = null;
     };
 
-    window.submitCtrlFirstAccess = async function() {
+    window.submitCtrlFirstAccess = function() {
       if (!ctrlUsuarioSelecionadoModal) return;
       const s1 = (document.getElementById('ctrlAuthNewPass')?.value || '').trim();
       const s2 = (document.getElementById('ctrlAuthConfPass')?.value || '').trim();
@@ -1523,10 +1614,10 @@
         email: emInput || ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal]?.email || defEmail,
         atualizado_em: Date.now()
       };
-      await pushCtrlGlobalAuthToSupabase();
       const nomeLogar = ctrlUsuarioSelecionadoModal;
       closeCtrlAuthModal();
       completeCtrlAuthenticatedLogin(nomeLogar);
+      pushCtrlGlobalAuthToSupabase();
       showToast(`Senha cadastrada! Bem-vindo, ${nomeLogar}!`);
     };
 
@@ -1619,6 +1710,7 @@
         return;
       }
       currentScreen = 'ops';
+      state.opId = '';
       document.getElementById('screenLogin')?.classList.add('hidden');
       document.getElementById('screenOperations').classList.remove('hidden');
       document.getElementById('screenWorkspace').classList.add('hidden');
@@ -1827,10 +1919,22 @@
     }
 
     function finalizeActiveOperation() {
+      const opIdToFin = state.opId;
+      const dtBr = formatDateBr(state.flightDate);
+      const isEmpty = (!Array.isArray(state.cons) || state.cons.length === 0) && (!Array.isArray(state.report) || state.report.length === 0);
+      if (isEmpty && opIdToFin) {
+        operationsCatalog = operationsCatalog.filter(o => o.id !== opIdToFin);
+        deleteOperationFromSupabaseById(opIdToFin);
+        state.opId = '';
+        saveCatalogAndState();
+        showToast(`Operação ${dtBr} estava vazia (0 CONS · 0 AWBs) e foi removida.`);
+        goToOperationsScreen();
+        return;
+      }
       state.status = 'FINALIZADA';
       state.finalizedAt = new Date().toISOString();
       saveCatalogAndState();
-      showToast(`Operação ${formatDateBr(state.flightDate)} finalizada e movida para o Histórico (48h).`);
+      showToast(`Operação ${dtBr} finalizada e movida para o Histórico (48h).`);
       opsHistoryTab = true;
       goToOperationsScreen();
     }
@@ -13029,9 +13133,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       initTheme();
       loadCtrlGlobalAuthFromStorage();
       loadCatalogFromStorage();
-      recalculateReportCurrencyTotals();
-      recalculateVolumesFromReport(false);
-      saveCatalogAndState();
 
       let sessaoAuth = null;
       try {
@@ -13050,7 +13151,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       initSupabaseRealtime();
       syncOperationsWithSupabase();
       setTimeout(() => {
-        if (state && state.status === 'ABERTA') {
+        if (state && state.opId && state.status === 'ABERTA' && currentScreen === 'workspace') {
           pullAwbsFromGestaoMinutas(false);
         }
       }, 1200);
