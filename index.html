@@ -80,11 +80,11 @@
 
         <!-- Active Operation Badge (h-8 = 32px) -->
         <div id="headerOperationControls" class="hidden items-center">
-          <div class="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400 text-xs font-bold border border-purple-100 dark:border-purple-500/20 whitespace-nowrap">
-            <span>Operação</span>
-            <span id="headerOpDateBadge" class="font-extrabold">03/11/2026</span>
+          <button type="button" onclick="goToOperationsScreen()" title="Clique para alternar entre operações ativas ou criar outra operação" class="h-8 inline-flex items-center gap-1.5 px-2.5 rounded-lg bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/10 dark:hover:bg-purple-500/20 text-purple-700 dark:text-purple-400 text-xs font-bold border border-purple-100 dark:border-purple-500/20 whitespace-nowrap cursor-pointer transition">
+            <span id="headerOpDateBadge" class="font-extrabold">Operação 03/11/2026</span>
             <span id="headerOpStatusPill" class="ml-1 text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-600 dark:text-emerald-400">ATIVA</span>
-          </div>
+            <span class="text-[10px] opacity-75 ml-0.5">⇄</span>
+          </button>
         </div>
       </div>
 
@@ -2096,13 +2096,11 @@
     }
 
     function openCreateOperationModal() {
-      const openOps = operationsCatalog.filter(o => o.status === 'ABERTA');
-      if (openOps.length > 0) {
-        showToast('Já existe uma operação em andamento. Finalize-a antes de criar uma nova ou entre nela.');
-        return;
-      }
       const todayIso = getLocalTodayIso();
-      const defaultName = `Operação ${formatDateBr(todayIso)}`;
+      let defaultName = `Operação ${formatDateBr(todayIso)}`;
+      if (operationsCatalog.some(o => o.status === 'ABERTA' && o.name === defaultName)) {
+        defaultName = `Operação ${formatDateBr(todayIso)} (Teste)`;
+      }
       const modalEl = document.getElementById('ctrlModalNovaOperacao');
       const inpEl = document.getElementById('modalNewOpNameInput');
       if (modalEl && inpEl) {
@@ -2132,6 +2130,10 @@
       if (!rawName) {
         showToast('Informe o nome da operação.');
         return;
+      }
+      // Salva o estado da operação anterior antes de criar e entrar na nova operação ativa
+      if (state && state.opId) {
+        saveCatalogAndState();
       }
       const dt = extractIsoDateFromOpName(rawName);
       const opId = 'OP_' + dt.replace(/-/g, '') + '_' + Date.now().toString().slice(-4);
@@ -2252,10 +2254,8 @@
     function reopenOperationById(opId) {
       const target = operationsCatalog.find(o => o.id === opId);
       if (!target) return;
-      const otherOpen = operationsCatalog.find(o => o.status === 'ABERTA' && o.id !== opId);
-      if (otherOpen) {
-        showToast(`Já existe outra operação em andamento (${formatDateBr(otherOpen.flightDate)}). Finalize-a antes de reabrir esta.`);
-        return;
+      if (state && state.opId && state.opId !== opId) {
+        saveCatalogAndState();
       }
       target.status = 'ABERTA';
       target.finalizedAt = null;
@@ -3010,7 +3010,7 @@
     function renderAll() {
       const isClosed = state.status === 'FINALIZADA';
       const opBadge = document.getElementById('headerOpDateBadge');
-      if (opBadge) opBadge.textContent = formatDateBr(state.flightDate);
+      if (opBadge) opBadge.textContent = state.opName || ('Operação ' + formatDateBr(state.flightDate));
       const statusPill = document.getElementById('headerOpStatusPill');
       if (statusPill) {
         statusPill.textContent = isClosed ? 'FINALIZADA' : 'ATIVA';
@@ -4750,7 +4750,8 @@
           'Content-Type': 'application/json'
         };
         const activeOpNames = await fetchActiveMinutasOpNames();
-        const matchingOps = Array.from(activeOpNames).filter(op => op === opAlvo || op.includes(dtBr));
+        const matchingOps = Array.from(activeOpNames).filter(op => doesMinutasOpMatchCtrlState(op, state));
+        matchingOps.sort((a, b) => (a === opAlvo ? -1 : (b === opAlvo ? 1 : 0)));
         const targetOpName = matchingOps[0] || opAlvo;
         const qUrl = `https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,destino,cia,status,operacao,dados&operacao=eq.${encodeURIComponent(targetOpName)}&id=not.like.__SYS_*`;
         const rList = await fetch(qUrl, { headers: hdrs });
@@ -7592,7 +7593,7 @@
         const pesosBc = new BroadcastChannel('fedex_aereo_pesos_channel');
         pesosBc.onmessage = (ev) => {
           if (ev.data && ev.data.type === 'CORRECOES_LIMPAS_NO_PESOS') {
-            revertAllPesosCorrectionsFromPesosClear();
+            revertAllPesosCorrectionsFromPesosClear(ev.data);
           }
         };
       } catch (e) {}
@@ -7638,6 +7639,73 @@
       } catch (e) {}
     }
 
+    function doesMinutasOpMatchCtrlState(opStr, stObj, catEntry = null) {
+      const cleanOp = String(opStr || '').trim();
+      if (!cleanOp || !stObj) return false;
+      const targetName = String(stObj.targetMinutasOpName || '').trim();
+      const ownName = String(stObj.opName || (catEntry && catEntry.name) || '').trim();
+      if (targetName) {
+        return cleanOp === targetName;
+      }
+      if (ownName && cleanOp === ownName) {
+        return true;
+      }
+      // Se outra operação aberta no catálogo já está vinculada explicitamente a esse nome, não mistura!
+      const claimedByOther = operationsCatalog.some(o => {
+        if (!o || o.status !== 'ABERTA') return false;
+        const oId = o.id;
+        const curId = stObj.opId || (catEntry && catEntry.id) || '';
+        if (oId === curId) return false;
+        const snap = o.snapshot || {};
+        return (snap.targetMinutasOpName && snap.targetMinutasOpName === cleanOp) || (o.name && o.name === cleanOp);
+      });
+      if (claimedByOther) return false;
+      const dtBr = formatDateBr(stObj.flightDate || (catEntry && catEntry.flightDate) || '');
+      return Boolean(dtBr && cleanOp.includes(dtBr));
+    }
+
+    function applyIncomingMinutasEventToSnapshot(data, snapObj) {
+      if (!data || !snapObj || !Array.isArray(snapObj.blocks)) return false;
+      let changed = false;
+      if (data.type === 'AWB_AEREA_GERADA' || data.awb_aereo || data.awbAereo || data.aguardando_cte) {
+        const bId = data.bloco_id || data.blocoId;
+        const dest = data.destino || '';
+        const awbVal = String(data.awb_aereo || data.awbAereo || '').trim();
+        const isWaitingCte = Boolean(data.aguardando_cte || awbVal.toUpperCase() === 'AGUARDANDO_CTE' || awbVal.toUpperCase() === 'AGUARDANDO CT-E');
+        let matched = snapObj.blocks.find(b => b.id === bId);
+        if (!matched && dest) {
+          matched = snapObj.blocks.find(b => exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === String(dest).toUpperCase());
+        }
+        if (matched) {
+          if (isWaitingCte) {
+            matched.aguardandoCteContingencia = true;
+            changed = true;
+          } else if (awbVal && matched.awbAereo !== awbVal) {
+            matched.aguardandoCteContingencia = false;
+            matched.awbAereo = awbVal;
+            changed = true;
+          }
+        }
+      } else if (Array.isArray(data.items)) {
+        for (const it of data.items) {
+          const bId = it.bloco_id || it.BLOCO_ID;
+          const dest = it.destino || it.DESTINO || '';
+          const awbVal = it.awb_aereo || it.AWB_AEREO;
+          if (!awbVal) continue;
+          let b = snapObj.blocks.find(x => x.id === bId);
+          if (!b && dest) {
+            b = snapObj.blocks.find(x => exportDestNameForMinutaWeb(x.id, x.dest).toUpperCase() === String(dest).toUpperCase());
+          }
+          if (b && b.awbAereo !== awbVal) {
+            b.awbAereo = awbVal;
+            b.aguardandoCteContingencia = false;
+            changed = true;
+          }
+        }
+      }
+      return changed;
+    }
+
     function handleIncomingMinutasEvent(data) {
       if (!data) return;
       if (data.type === 'MALHA_ATUALIZADA' && Array.isArray(data.malha)) {
@@ -7646,15 +7714,21 @@
         return;
       }
       if (data.type === 'CORRECOES_LIMPAS_NO_PESOS') {
-        revertAllPesosCorrectionsFromPesosClear();
+        revertAllPesosCorrectionsFromPesosClear(data);
         return;
       }
-      const dtBr = formatDateBr(state.flightDate);
       if (data.operacao) {
         const opStr = String(data.operacao).trim();
-        const matchesTarget = state.targetMinutasOpName && opStr === state.targetMinutasOpName;
-        const matchesDate = opStr.includes(dtBr);
-        if (!matchesTarget && !matchesDate) return;
+        if (!doesMinutasOpMatchCtrlState(opStr, state)) {
+          // Verifica se pertence a outra operação ativa em segundo plano no catálogo e atualiza sem misturar com a atual
+          const bgOp = operationsCatalog.find(o => o.status === 'ABERTA' && o.id !== state.opId && o.snapshot && doesMinutasOpMatchCtrlState(opStr, o.snapshot, o));
+          if (bgOp && bgOp.snapshot) {
+            if (applyIncomingMinutasEventToSnapshot(data, bgOp.snapshot)) {
+              saveCatalogAndState();
+            }
+          }
+          return;
+        }
       }
       if (data.type === 'AWB_AEREA_GERADA' || data.awb_aereo || data.awbAereo || data.aguardando_cte) {
         const bId = data.bloco_id || data.blocoId;
@@ -7772,10 +7846,14 @@
         }
 
         const dtBr = formatDateBr(state.flightDate);
-        // Filtra apenas a operação ativa do Gestão de Minutas que corresponde à operação atual do Controle Operacional
-        const matchingActiveOps = Array.from(activeOpNames).filter(opName => {
-          if (state.targetMinutasOpName && opName === state.targetMinutasOpName) return true;
-          return opName.includes(dtBr);
+        // Filtra estritamente a operação ativa do Gestão de Minutas que corresponde à operação atual do Controle Operacional
+        const matchingActiveOps = Array.from(activeOpNames).filter(opName => doesMinutasOpMatchCtrlState(opName, state));
+        matchingActiveOps.sort((a, b) => {
+          if (state.targetMinutasOpName && a === state.targetMinutasOpName) return -1;
+          if (state.targetMinutasOpName && b === state.targetMinutasOpName) return 1;
+          if (state.opName && a === state.opName) return -1;
+          if (state.opName && b === state.opName) return 1;
+          return 0;
         });
 
         if (matchingActiveOps.length === 0) {
@@ -7865,20 +7943,93 @@
       } catch (e) {}
     }
 
-    // 1. GESTÃO DE PESOS: BUSCAR APENAS OPERAÇÕES ATIVAS
+    // 1. GESTÃO DE PESOS: BUSCAR TODAS AS OPERAÇÕES ATIVAS (INCLUINDO MULTI-OPERAÇÕES SIMULTÂNEAS)
     async function syncPesosFromSupabase() {
       showToast('Buscando operações ativas no Gestão de Pesos...');
       try {
-        const res = await fetch(`https://hhxcloojniyfrgfpfbgx.supabase.co/rest/v1/operacoes?select=*&order=criada_em.desc&limit=25`, {
-          headers: { apikey: PESO_SUPABASE_KEY, 'Content-Type': 'application/json' }
-        });
+        const [res, bridgeRes] = await Promise.all([
+          fetch(`https://hhxcloojniyfrgfpfbgx.supabase.co/rest/v1/operacoes?select=*&order=criada_em.desc&limit=40`, {
+            headers: { apikey: PESO_SUPABASE_KEY, 'Content-Type': 'application/json' }
+          }),
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=dados&id=eq.__SYS_PESOS_MULTI_OPS__`, {
+            headers: {
+              apikey: MINUTAS_SUPABASE_KEY,
+              Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+              'Content-Type': 'application/json'
+            }
+          }).catch(() => null)
+        ]);
         if (!res.ok) throw new Error('Falha ao consultar operações.');
         const allOps = await res.json();
-        const activeOps = Array.isArray(allOps) ? allOps.filter(isOperacaoAtiva) : [];
+
+        let multiMap = {};
+        try {
+          const localMulti = localStorage.getItem('peso_multi_active_ops_v1');
+          if (localMulti) multiMap = { ...multiMap, ...(JSON.parse(localMulti) || {}) };
+        } catch (e) {}
+        if (bridgeRes && bridgeRes.ok) {
+          try {
+            const bRows = await bridgeRes.json();
+            if (Array.isArray(bRows) && bRows[0] && bRows[0].dados && bRows[0].dados.ops) {
+              const cloudOps = bRows[0].dados.ops;
+              for (const [k, v] of Object.entries(cloudOps)) {
+                if (!multiMap[k] || Number(v.updatedAt || 0) >= Number(multiMap[k].updatedAt || 0)) {
+                  multiMap[k] = v;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+
+        const byId = new Map();
+        if (Array.isArray(allOps)) {
+          for (const o of allOps) {
+            if (!o || !o.id) continue;
+            const mEntry = multiMap[o.id];
+            const effectiveStatus = mEntry && mEntry.status ? mEntry.status : o.status;
+            const merged = {
+              ...o,
+              nome: (mEntry && mEntry.nome) || o.nome,
+              data_operacao: (mEntry && mEntry.data_operacao) || o.data_operacao,
+              status: effectiveStatus,
+              finalizada_em: effectiveStatus === 'ABERTA' ? null : o.finalizada_em
+            };
+            if (effectiveStatus === 'ABERTA' || isOperacaoAtiva(merged)) {
+              byId.set(o.id, merged);
+            }
+          }
+        }
+        for (const [mId, mVal] of Object.entries(multiMap)) {
+          if (mVal && mVal.status === 'ABERTA' && !byId.has(mId)) {
+            byId.set(mId, {
+              id: mId,
+              nome: mVal.nome || 'Operação',
+              data_operacao: mVal.data_operacao || '',
+              status: 'ABERTA',
+              finalizada_em: null
+            });
+          }
+        }
+
+        const activeOps = Array.from(byId.values());
         if (activeOps.length === 0) {
           showToast('Nenhuma operação ativa em andamento no Gestão de Pesos.');
           return;
         }
+        // Ordena colocando a operação já vinculada ou da mesma data/nome no topo
+        const curDateIso = String(state.flightDate || '').slice(0, 10);
+        const curDateBr = formatDateBr(curDateIso);
+        activeOps.sort((a, b) => {
+          const aLinked = state.pesosGestaoOpId && a.id === state.pesosGestaoOpId ? 1 : 0;
+          const bLinked = state.pesosGestaoOpId && b.id === state.pesosGestaoOpId ? 1 : 0;
+          if (aLinked !== bLinked) return bLinked - aLinked;
+          const aMatchName = state.opName && String(a.nome || '').trim() === String(state.opName).trim() ? 1 : 0;
+          const bMatchName = state.opName && String(b.nome || '').trim() === String(state.opName).trim() ? 1 : 0;
+          if (aMatchName !== bMatchName) return bMatchName - aMatchName;
+          const aMatchDate = (a.data_operacao && String(a.data_operacao).slice(0, 10) === curDateIso) || (curDateBr && String(a.nome || '').includes(curDateBr)) ? 1 : 0;
+          const bMatchDate = (b.data_operacao && String(b.data_operacao).slice(0, 10) === curDateIso) || (curDateBr && String(b.nome || '').includes(curDateBr)) ? 1 : 0;
+          return bMatchDate - aMatchDate;
+        });
         openSelectGestaoPesosOpModal(activeOps);
       } catch (err) {
         showToast('Não foi possível conectar ao Gestão de Pesos agora: ' + err.message);
@@ -7886,19 +8037,27 @@
     }
 
     function openSelectGestaoPesosOpModal(ops) {
+      const curDateIso = String(state.flightDate || '').slice(0, 10);
+      const curDateBr = formatDateBr(curDateIso);
       const optionsHtml = ops.map(o => {
-        const dt = o.data_operacao ? o.data_operacao.slice(0, 10).split('-').reverse().join('/') : '';
+        const mDate = String(o.nome || '').match(/(\d{2})\/(\d{2})\/(\d{4})/);
+        const dt = o.data_operacao
+          ? o.data_operacao.slice(0, 10).split('-').reverse().join('/')
+          : (mDate ? `${mDate[1]}/${mDate[2]}/${mDate[3]}` : '');
+        const isLinked = Boolean(state.pesosGestaoOpId && o.id === state.pesosGestaoOpId);
+        const isDateMatch = Boolean((o.data_operacao && String(o.data_operacao).slice(0, 10) === curDateIso) || (dt && dt === curDateBr) || (state.opName && o.nome === state.opName));
         return `
-          <div class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-purple-500 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-2">
+          <div class="p-3.5 rounded-xl border ${isLinked || isDateMatch ? 'border-purple-500 bg-purple-500/5' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60'} hover:border-purple-500 flex items-center justify-between gap-2">
             <div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400">● Ativa</span>
                 <span class="font-bold text-slate-800 dark:text-slate-100">${o.nome || 'Operação'}</span>
                 ${dt ? `<span class="text-purple-600 dark:text-purple-400 font-bold">(${dt})</span>` : ''}
+                ${isLinked ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-600 text-white">✓ Vinculada a esta operação</span>` : (isDateMatch ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300">★ Mesma data</span>` : '')}
               </div>
               <div class="text-[11px] font-mono text-slate-400 mt-0.5">ID: ${o.id}</div>
             </div>
-            <button type="button" onclick="applyGestaoPesosOperation('${o.id}')" class="btn-web px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs">
+            <button type="button" onclick="applyGestaoPesosOperation('${o.id}')" class="btn-web px-3.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs shrink-0">
               Importar Pesos
             </button>
           </div>
@@ -8556,29 +8715,55 @@
         return;
       }
 
+      const dtBr = formatDateBr(state.flightDate);
+      activeMinutasOps.sort((a, b) => {
+        const aLinked = state.targetMinutasOpName && a.nome === state.targetMinutasOpName ? 1 : 0;
+        const bLinked = state.targetMinutasOpName && b.nome === state.targetMinutasOpName ? 1 : 0;
+        if (aLinked !== bLinked) return bLinked - aLinked;
+        const aExact = state.opName && a.nome === state.opName ? 1 : 0;
+        const bExact = state.opName && b.nome === state.opName ? 1 : 0;
+        if (aExact !== bExact) return bExact - aExact;
+        const aDt = dtBr && String(a.nome || '').includes(dtBr) ? 1 : 0;
+        const bDt = dtBr && String(b.nome || '').includes(dtBr) ? 1 : 0;
+        return bDt - aDt;
+      });
+
+      const hasExactDefault = activeMinutasOps.some(o => String(o.nome || '').trim() === defaultOpName);
       const listHtml = activeMinutasOps.map(o => {
         const safeNome = String(o.nome || '').replace(/'/g, "\'");
         const safeId = String(o.id || '').replace(/'/g, "\'");
+        const isLinked = Boolean(state.targetMinutasOpName && o.nome === state.targetMinutasOpName);
+        const isMatch = Boolean(o.nome === defaultOpName || (dtBr && String(o.nome || '').includes(dtBr)));
         return `
-          <div class="p-3.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-emerald-500 bg-slate-50 dark:bg-slate-800/60 flex items-center justify-between gap-2">
+          <div class="p-3.5 rounded-xl border ${isLinked || isMatch ? 'border-emerald-500 bg-emerald-500/5' : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/60'} hover:border-emerald-500 flex items-center justify-between gap-2">
             <div>
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400">● Em andamento</span>
                 <span class="font-bold text-slate-800 dark:text-slate-100">${o.nome}</span>
+                ${isLinked ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-600 text-white">✓ Vinculada a esta operação</span>` : (isMatch ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300">★ Correspondente</span>` : '')}
               </div>
               <div class="text-[11px] font-mono text-slate-400 mt-0.5">Operador: ${o.criado_por || 'EQUIPE'}</div>
             </div>
-            <button type="button" onclick="sendMinutasAndZipToOperation('${safeId}', '${safeNome}', true)" class="btn-web px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs">
+            <button type="button" onclick="sendMinutasAndZipToOperation('${safeId}', '${safeNome}', true)" class="btn-web px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs shrink-0">
               Enviar Minutas
             </button>
           </div>
         `;
       }).join('');
 
+      const createExtraHtml = !hasExactDefault ? `
+        <div class="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+          <button type="button" onclick="createAndSendMinutasOperationDirectly('${safeDefaultOpName}')" class="btn-web w-full py-2.5 px-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs shadow-sm">
+            ＋ Criar nova operação ativa "${defaultOpName}" no Gestão de Minutas e Enviar →
+          </button>
+        </div>
+      ` : '';
+
       openModal(
         'Operações Ativas — Gestão de Minutas',
-        `<p class="text-slate-600 dark:text-slate-300 mb-2">Ao clicar em <strong>Enviar Minutas</strong>, o sistema transmite automaticamente <strong>todos os blocos ativos (LATAM/GOL) + o pacote ZIP de minutas individuais da LATAM</strong> direto para a operação selecionada no Gestão de Minutas:</p>
-         <div class="space-y-2">${listHtml}</div>`,
+        `<p class="text-slate-600 dark:text-slate-300 mb-2">Ao clicar em <strong>Enviar Minutas</strong>, o sistema transmite automaticamente <strong>todos os blocos ativos (LATAM/GOL) + o pacote ZIP de minutas individuais da LATAM</strong> apenas para a operação selecionada (sem interferir nas demais operações ativas):</p>
+         <div class="space-y-2">${listHtml}</div>
+         ${createExtraHtml}`,
         `<button type="button" onclick="closeModal()" class="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">Fechar</button>`
       );
     }
@@ -12468,7 +12653,25 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       } catch (e) {}
     }
 
-    function revertAllPesosCorrectionsFromPesosClear() {
+    function revertAllPesosCorrectionsFromPesosClear(evData = null) {
+      if (evData && (evData.operacao_id || evData.flight_date)) {
+        const matchesCurrent = (state.pesosGestaoOpId && evData.operacao_id)
+          ? String(state.pesosGestaoOpId) === String(evData.operacao_id)
+          : (!state.pesosGestaoOpId && evData.flight_date && String(state.flightDate) === String(evData.flight_date));
+        if (!matchesCurrent) {
+          // Se pertencer a outra operação ativa no catálogo, limpa apenas o snapshot daquela operação!
+          const bgOp = operationsCatalog.find(o => o.status === 'ABERTA' && o.id !== state.opId && o.snapshot && (
+            (o.snapshot.pesosGestaoOpId && evData.operacao_id && String(o.snapshot.pesosGestaoOpId) === String(evData.operacao_id)) ||
+            (!o.snapshot.pesosGestaoOpId && evData.flight_date && String(o.snapshot.flightDate) === String(evData.flight_date))
+          ));
+          if (bgOp && bgOp.snapshot) {
+            bgOp.snapshot.crossReconciliations = { ignoredIds: [], approved: [] };
+            bgOp.snapshot.scaleCorrectionsApproved = [];
+            saveCatalogAndState();
+          }
+          return;
+        }
+      }
       ensureCrossReconciliationsState();
       const hadAny = (state.crossReconciliations.approved && state.crossReconciliations.approved.length > 0) ||
                      (state.scaleCorrectionsApproved && state.scaleCorrectionsApproved.length > 0);
