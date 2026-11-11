@@ -321,8 +321,8 @@
       </button>
     </div>
 
-    <!-- KPI Summary Strip -->
-    <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5">
+    <!-- KPI Summary Strip (Congelado ao rolar a página) -->
+    <section id="kpiSummaryStickyStrip" class="sticky top-[96px] z-40 -mx-4 px-4 py-2.5 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200/70 dark:border-slate-800/80 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3.5 transition-colors shadow-xs">
       <div class="bg-white dark:bg-slate-900 rounded-2xl p-4 shadow-xs border border-slate-200/80 dark:border-slate-800">
         <div class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">CONS Importadas</div>
         <div class="mt-1.5 flex items-baseline justify-between">
@@ -2296,15 +2296,22 @@
     // =========================================================================
     function determineBlockId(dest, tipo) {
       const raw = String(dest || '').trim().toUpperCase();
-      const d = (typeof AIR_DEST_CANONICAL_MAP !== 'undefined' && AIR_DEST_CANONICAL_MAP[raw]) ? AIR_DEST_CANONICAL_MAP[raw] : raw;
       const t = String(tipo || '').trim().toUpperCase();
-      if (d === 'BSBA' || d === 'BSB') return t === 'SACA' ? 'BRASILIA_SACA' : 'BRASILIA_CAIXAS';
-      if (d === 'FORA' || d === 'FOR') return t === 'FORMAL' ? 'FORTALEZA_FORMAL' : 'FORTALEZA_NORMAL';
-      if (d === 'JPAA' || d === 'JPA' || d === 'JPA VIA REC') return 'JOAO_PESSOA_VIA_RECIFE';
-      if (d === 'ITNA' || d === 'ITN' || d === 'ITN/IOS/TXT') return 'ITN_IOS_TXT';
-      if (d === 'SSA') return 'SSAA';
-      if (d === 'VDC') return 'VDCA';
-      return d;
+      if (/\bFORMAL\b/.test(raw) || (t === 'FORMAL' && /^FOR/.test(raw))) {
+        return /\bDG\b/.test(raw) ? 'FORTALEZA_FORMAL|DG' : (/\bPALLET\b/.test(raw) ? 'FORTALEZA_FORMAL|PALLET' : 'FORTALEZA_FORMAL');
+      }
+      const strippedRaw = raw.replace(/\s+(?:DG|PALLET)$/i, '').trim();
+      const d = (typeof AIR_DEST_CANONICAL_MAP !== 'undefined' && AIR_DEST_CANONICAL_MAP[strippedRaw]) ? AIR_DEST_CANONICAL_MAP[strippedRaw] : strippedRaw;
+      let baseId = d;
+      if (d === 'BSBA' || d === 'BSB') baseId = t === 'SACA' ? 'BRASILIA_SACA' : 'BRASILIA_CAIXAS';
+      else if (d === 'FORA' || d === 'FOR') baseId = t === 'FORMAL' ? 'FORTALEZA_FORMAL' : 'FORTALEZA_NORMAL';
+      else if (d === 'JPAA' || d === 'JPA' || d === 'JPA VIA REC') baseId = 'JOAO_PESSOA_VIA_RECIFE';
+      else if (d === 'ITNA' || d === 'ITN' || d === 'ITN/IOS/TXT') baseId = 'ITN_IOS_TXT';
+      else if (d === 'SSA') baseId = 'SSAA';
+      else if (d === 'VDC') baseId = 'VDCA';
+      if (/\bDG$/.test(raw) || t === 'DG') return normalizeDgBaseId(baseId) + '|DG';
+      if (/\bPALLET$/.test(raw) || t === 'PALLET') return normalizePalletBaseId(baseId) + '|PALLET';
+      return baseId;
     }
 
     function exportDestNameForMinutaWeb(blockId, mainDest) {
@@ -2361,16 +2368,24 @@
       return `${code} PALLET`;
     }
 
-    // Uma AWB só está em status DG ativo quando está em state.dgs E NÃO está recusada nem fora do voo.
-    // Quando uma AWB DG é recusada, ela sai do status/bloco DG e vai para Recusada; se tirar a recusa, volta automaticamente para DG!
+    // Uma AWB está com status DG ativo na operação quando pertence ao DG e não está recusada nem fora do voo
     function isAwbActiveDg(awb) {
       const clean = String(awb || '').trim();
       return Boolean(clean && state.dgs.includes(clean) && !state.recusas.includes(clean) && !state.foraDoVoo.includes(clean));
     }
 
+    // Verifica se a AWB pertence a um bloco DG (mesmo que tenha sido marcada como Recusada ou Fora do Voo, ela permanece no bloco DG para onde foi movimentada!)
+    function isAwbInDgBlock(awb) {
+      const clean = String(awb || '').trim();
+      if (!clean) return false;
+      if (Array.isArray(state.dgs) && state.dgs.includes(clean)) return true;
+      if (state.movimentacoes && String(state.movimentacoes[clean] || '').toUpperCase().endsWith('|DG')) return true;
+      return false;
+    }
+
     function getCurrentBlockForAwb(awb, consStr) {
       const cleanAwb = String(awb || '').trim();
-      const activeDg = isAwbActiveDg(cleanAwb);
+      const inDgBlock = isAwbInDgBlock(cleanAwb);
       if (state.pallets && state.pallets[cleanAwb]) {
         const pInfo = state.pallets[cleanAwb];
         const cObj = state.cons.find(c => c.cons === consStr);
@@ -2380,8 +2395,11 @@
       }
       if (state.movimentacoes && state.movimentacoes[cleanAwb]) {
         const base = state.movimentacoes[cleanAwb];
-        if (activeDg) {
+        if (inDgBlock || String(base).toUpperCase().endsWith('|DG')) {
           return normalizeDgBaseId(base) + '|DG';
+        }
+        if (String(base).toUpperCase().endsWith('|PALLET')) {
+          return normalizePalletBaseId(base) + '|PALLET';
         }
         const stripped = base.replace(/\|DG$/i, '');
         return stripped === 'BSBA' ? 'BRASILIA_CAIXAS' : stripped;
@@ -2398,7 +2416,7 @@
           baseId = determineBlockId(fallbackLoc, fallbackTipo);
         }
       }
-      if (activeDg) {
+      if (inDgBlock) {
         return normalizeDgBaseId(baseId) + '|DG';
       }
       const stripped = baseId.replace(/\|DG$/i, '');
@@ -2407,6 +2425,54 @@
 
     function migrateLegacyBrasiliaDgState() {
       const legacyIds = ['BRASILIA_CAIXAS|DG', 'BRASILIA_SACA|DG'];
+      if (Array.isArray(state.blocks)) {
+        const toRemoveMovIds = new Set();
+        for (const b of state.blocks) {
+          const bid = String(b.id || '');
+          const bdest = String(b.dest || '').trim().toUpperCase();
+          if (bid.startsWith('MOV|')) {
+            if (/\bFORMAL\b/.test(bdest)) {
+              toRemoveMovIds.add(bid);
+              if (state.movimentacoes) {
+                for (const [mk, mv] of Object.entries(state.movimentacoes)) {
+                  if (mv === bid) state.movimentacoes[mk] = 'FORTALEZA_FORMAL';
+                }
+              }
+            } else if (/\bDG\b/.test(bdest)) {
+              const baseDest = bdest.replace(/\s+DG$/i, '').trim();
+              const canonDg = normalizeDgBaseId(determineBlockId(baseDest, 'CAIXAS')) + '|DG';
+              toRemoveMovIds.add(bid);
+              if (state.movimentacoes) {
+                for (const [mk, mv] of Object.entries(state.movimentacoes)) {
+                  if (mv === bid) {
+                    state.movimentacoes[mk] = canonDg;
+                    if (mk.length === 12 && !state.dgs.includes(mk)) state.dgs.push(mk);
+                  }
+                }
+              }
+            } else if (/\bPALLET\b/.test(bdest)) {
+              const baseDest = bdest.replace(/\s+PALLET$/i, '').trim();
+              const canonBase = normalizePalletBaseId(determineBlockId(baseDest, 'CAIXAS'));
+              const canonPlt = canonBase + '|PALLET';
+              toRemoveMovIds.add(bid);
+              if (state.movimentacoes) {
+                for (const [mk, mv] of Object.entries(state.movimentacoes)) {
+                  if (mv === bid) {
+                    state.movimentacoes[mk] = canonPlt;
+                    if (!state.pallets) state.pallets = {};
+                    if (mk.length >= 10 && !state.pallets[mk]) {
+                      state.pallets[mk] = { awb: mk, dest: baseDest, baseId: canonBase, vol: Math.max(1, Number(b.vol || 1)), peso: Math.max(0.5, Number(b.peso || 1)) };
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        if (toRemoveMovIds.size > 0) {
+          state.blocks = state.blocks.filter(b => !toRemoveMovIds.has(b.id));
+        }
+      }
       if (state.movimentacoes && typeof state.movimentacoes === 'object') {
         for (const [k, v] of Object.entries(state.movimentacoes)) {
           if (legacyIds.includes(String(v || '').toUpperCase())) {
@@ -2472,13 +2538,24 @@
           if (!palletGroups[baseId].some(x => x.awb === awb)) {
             palletGroups[baseId].push(pInfo);
           }
-        } else if (isAwbActiveDg(awb)) {
+        } else if (isAwbInDgBlock(awb)) {
           const fullBlockId = getCurrentBlockForAwb(awb, cons);
           const baseId = normalizeDgBaseId(fullBlockId);
           if (!dgGroups[baseId]) dgGroups[baseId] = [];
           if (!dgGroups[baseId].includes(awb)) {
             dgGroups[baseId].push(awb);
           }
+        }
+      }
+
+      // Garante que qualquer AWB DG (mesmo que esteja Recusada ou Fora do Voo) mantenha seu bloco DG na tela (como Fora da Operação se vol === 0)
+      for (const dgAwb of (state.dgs || [])) {
+        if (!dgAwb) continue;
+        const fullBlockId = getCurrentBlockForAwb(dgAwb, '');
+        const baseId = normalizeDgBaseId(fullBlockId);
+        if (!dgGroups[baseId]) dgGroups[baseId] = [];
+        if (!dgGroups[baseId].includes(dgAwb)) {
+          dgGroups[baseId].push(dgAwb);
         }
       }
 
@@ -2513,6 +2590,7 @@
           return acc + (rRow ? Number(rRow[5] || 0) : 0);
         }, 0) * 100) / 100;
         const dgDestLabel = baseId === 'BSBA' ? 'BSBA DG' : (String(baseBlock.dest || baseId).replace(/\s+DG$/i, '') + ' DG');
+        const prevSavedPeso = prev ? (Number(prev.peso) > 0 ? Number(prev.peso) : Number(prev._savedDgPeso || 0)) : 0;
         newDgBlocks.push({
           id: dgId,
           orig: (prev && prev.manualMalhaOverride) ? prev.orig : baseBlock.orig,
@@ -2521,8 +2599,10 @@
           dest: dgDestLabel,
           tipo: 'DG',
           awbAereo: prev ? prev.awbAereo : '',
+          aguardandoCteContingencia: Boolean(prev && prev.aguardandoCteContingencia),
+          _savedDgPeso: prevSavedPeso > 0 ? prevSavedPeso : reportDgPeso,
           vol: activeCount,
-          peso: activeCount === 0 ? 0 : (prev && Number(prev.peso) > 0 ? prev.peso : (reportDgPeso > 0 ? reportDgPeso : activeCount * 2))
+          peso: activeCount === 0 ? 0 : (prevSavedPeso > 0 ? prevSavedPeso : (reportDgPeso > 0 ? reportDgPeso : activeCount * 2))
         });
       }
 
@@ -2626,12 +2706,80 @@
         }
         state.report = filtered;
       }
+      // Reconcilia e elimina qualquer linha sintética (AVULSO_ / PALLET_) que seja duplicata por prefixo/sufixo/zero à esquerda de uma AWB real do REPORT
+      const isSyntheticConsKey = (cStr) => /^(AVULSO_|PALLET_)/i.test(String(cStr || '').trim());
+      const realRowsForCanon = (Array.isArray(state.allReportRows) && state.allReportRows.length > 0 ? state.allReportRows : state.report)
+        .filter(r => r && r[0] && !isSyntheticConsKey(r[1]));
+      const resolveCanonicalAwb = (rawAwbStr) => {
+        const clean = String(rawAwbStr || '').replace(/\D/g, '');
+        if (!clean) return '';
+        const stripped = clean.replace(/^0+/, '');
+        for (const rr of realRowsForCanon) {
+          const rAwb = String(rr[0] || '').replace(/\D/g, '');
+          if (rAwb === clean || (stripped.length >= 9 && rAwb.replace(/^0+/, '') === stripped)) return rAwb;
+        }
+        if (clean.length >= 10 && clean.length < 12) {
+          const prefMatches = realRowsForCanon.filter(rr => {
+            const rAwb = String(rr[0] || '').replace(/\D/g, '');
+            return rAwb.startsWith(clean) || rAwb.endsWith(clean) || (stripped.length >= 9 && rAwb.replace(/^0+/, '').startsWith(stripped));
+          });
+          if (prefMatches.length === 1) return String(prefMatches[0][0] || '').replace(/\D/g, '');
+        }
+        return clean;
+      };
+
+      if (Array.isArray(state.dgs)) {
+        const newDgs = [];
+        for (const dAwb of state.dgs) {
+          const canon = resolveCanonicalAwb(dAwb);
+          if (canon && !newDgs.includes(canon)) newDgs.push(canon);
+        }
+        state.dgs = newDgs;
+      }
+      if (state.pallets && typeof state.pallets === 'object') {
+        for (const pKey of Object.keys(state.pallets)) {
+          const canon = resolveCanonicalAwb(pKey);
+          if (canon && canon !== pKey) {
+            if (!state.pallets[canon]) {
+              state.pallets[canon] = { ...state.pallets[pKey], awb: canon };
+            }
+            delete state.pallets[pKey];
+          }
+        }
+      }
+      if (state.movimentacoes && typeof state.movimentacoes === 'object') {
+        for (const mKey of Object.keys(state.movimentacoes)) {
+          const canon = resolveCanonicalAwb(mKey);
+          if (canon && canon !== mKey) {
+            if (!state.movimentacoes[canon]) state.movimentacoes[canon] = state.movimentacoes[mKey];
+            delete state.movimentacoes[mKey];
+          }
+        }
+      }
+      if (Array.isArray(state.allReportRows) && realRowsForCanon.length > 0) {
+        state.allReportRows = state.allReportRows.filter(r => {
+          if (!r || !r[0]) return false;
+          if (!isSyntheticConsKey(r[1])) return true;
+          const rawAwb = String(r[0] || '').replace(/\D/g, '');
+          const canon = resolveCanonicalAwb(rawAwb);
+          return canon === rawAwb && !realRowsForCanon.some(rr => String(rr[0] || '').replace(/\D/g, '') === canon);
+        });
+      }
+
       const dedupReport = [];
       const seenRepAwbs = new Set();
-      for (const r of state.report) {
-        const awbKey = String(r[0] || '').trim();
-        if (!awbKey || seenRepAwbs.has(awbKey)) continue;
+      const seenRepStripped = new Set();
+      // Prioriza linhas reais da CONS antes de linhas sintéticas AVULSO_/PALLET_
+      const sortedReportForDedup = [...state.report].sort((a, b) => (isSyntheticConsKey(a[1]) ? 1 : 0) - (isSyntheticConsKey(b[1]) ? 1 : 0));
+      for (const r of sortedReportForDedup) {
+        const rawKey = String(r[0] || '').replace(/\D/g, '');
+        if (!rawKey) continue;
+        const awbKey = isSyntheticConsKey(r[1]) ? resolveCanonicalAwb(rawKey) : rawKey;
+        r[0] = awbKey;
+        const strippedKey = awbKey.replace(/^0+/, '') || awbKey;
+        if (seenRepAwbs.has(awbKey) || seenRepStripped.has(strippedKey)) continue;
         seenRepAwbs.add(awbKey);
+        seenRepStripped.add(strippedKey);
         if (Number(r[7] || 0) <= 0) {
           r[7] = 1.00;
           r[8] = 'BRL';
@@ -2830,8 +2978,20 @@
     // =========================================================================
     // TAB SWITCHING & RENDERING
     // =========================================================================
+    function syncStickyKpiTopOffset() {
+      const hdr = document.querySelector('header');
+      const strip = document.getElementById('kpiSummaryStickyStrip');
+      if (hdr && strip) {
+        const h = hdr.offsetHeight || 96;
+        strip.style.top = h + 'px';
+      }
+    }
+    window.addEventListener('resize', syncStickyKpiTopOffset);
+    setTimeout(syncStickyKpiTopOffset, 150);
+
     function switchTab(tab) {
       activeTab = tab;
+      setTimeout(syncStickyKpiTopOffset, 20);
       ['cockpit', 'main', 'report', 'pendencias', 'pesos', 'resumo'].forEach(t => {
         const panel = document.getElementById('tabPanel-' + t);
         const btn = document.getElementById('tabBtn-' + t);
@@ -2905,7 +3065,7 @@
         totalPeso += Number(b.peso || 0);
         if ((b.cia === 'LATAM' || b.cia === 'GOL') && (b.vol > 0 || b.peso > 0)) {
           eligibleMinutas++;
-          if (b.awbAereo && String(b.awbAereo).trim().length > 0) filledAwbs++;
+          if ((b.awbAereo && String(b.awbAereo).trim().length > 0) || b.aguardandoCteContingencia) filledAwbs++;
         }
       }
       document.getElementById('kpiVolTotal').textContent = totalVol;
@@ -3394,9 +3554,11 @@
         if (rAwb === clean || rAwb === padded12) return r;
         if (stripped.length >= 9 && rAwb.replace(/^0+/, '') === stripped) return r;
       }
-      // Se tiver 9 a 11 dígitos e for sufixo único de uma AWB de 12 dígitos
+      // Se tiver 9 a 11 dígitos e for sufixo único ou prefixo único de uma AWB de 12 dígitos (ex: 51823804531 -> 518238045310)
       const suffixMatches = rows.filter(r => String(r[0] || '').endsWith(clean));
       if (suffixMatches.length === 1) return suffixMatches[0];
+      const prefixMatches = rows.filter(r => String(r[0] || '').startsWith(clean) || (stripped.length >= 9 && String(r[0] || '').replace(/^0+/, '').startsWith(stripped)));
+      if (prefixMatches.length === 1) return prefixMatches[0];
       return null;
     }
 
@@ -3778,6 +3940,10 @@
           const idx = state.dgs.indexOf(awb);
           if (idx >= 0) {
             state.dgs.splice(idx, 1);
+            if (state.movimentacoes && String(state.movimentacoes[awb] || '').toUpperCase().endsWith('|DG')) {
+              const baseMov = String(state.movimentacoes[awb]).replace(/\|DG$/i, '');
+              state.movimentacoes[awb] = baseMov === 'BSBA' ? 'BRASILIA_CAIXAS' : baseMov;
+            }
             showToast(`DG desativado para a AWB ${awb}.`);
           } else {
             state.dgs.push(awb);
@@ -3875,7 +4041,7 @@
           const awb = String(r[0]);
           if (awb) {
             total++;
-            if (isAwbActiveDg(awb) || (state.pallets && state.pallets[awb])) totalSpecial++;
+            if (isAwbInDgBlock(awb) || (state.pallets && state.pallets[awb])) totalSpecial++;
           }
         }
       }
@@ -3906,12 +4072,22 @@
         const palletAwbs = state.report
           .filter(r => state.pallets && state.pallets[String(r[0])] && getCurrentBlockForAwb(String(r[0]), String(r[1])) === blockId)
           .map(r => String(r[0]));
+        for (const pAwb of Object.keys(state.pallets || {})) {
+          if (!palletAwbs.includes(pAwb) && getCurrentBlockForAwb(pAwb, "") === blockId) {
+            palletAwbs.push(pAwb);
+          }
+        }
         return { consItems: [], dgAwbs: [], palletAwbs, originalSeals: [] };
       }
       if (String(blockId).endsWith('|DG')) {
         const dgAwbs = state.report
-          .filter(r => isAwbActiveDg(String(r[0])) && getCurrentBlockForAwb(String(r[0]), String(r[1])) === blockId)
+          .filter(r => isAwbInDgBlock(String(r[0])) && getCurrentBlockForAwb(String(r[0]), String(r[1])) === blockId)
           .map(r => String(r[0]));
+        for (const a of (state.dgs || [])) {
+          if (!dgAwbs.includes(a) && getCurrentBlockForAwb(a, '') === blockId) {
+            dgAwbs.push(a);
+          }
+        }
         return { consItems: [], dgAwbs, palletAwbs: [], originalSeals: [] };
       }
       const consItems = state.cons.filter(
@@ -4176,7 +4352,7 @@
       // 2. Sem CT-e importado ainda -> Em Preparação ou Aguardando CT-e
       if (!cte) {
         const missingPrep = [];
-        if (!hasValidAwb) missingPrep.push('AWB Aéreo');
+        if (!hasValidAwb && !b.aguardandoCteContingencia) missingPrep.push('AWB Aéreo');
         if (!hasWeight) missingPrep.push('Peso');
         if (missingPrep.length > 0) {
           return {
@@ -4191,7 +4367,7 @@
         }
         return {
           status: 'AGUARDANDO_CTE',
-          label: 'Aguardando CT-e',
+          label: b.aguardandoCteContingencia ? 'Aguardando CT-e (Contingência)' : 'Aguardando CT-e',
           missingPrep: [],
           discrepancies: [],
           missingInCteAwbs: [],
@@ -4228,7 +4404,11 @@
         });
       }
 
-      // 3.3 AWB Aéreo
+      // 3.3 AWB Aéreo (se estava aguardando CT-e por contingência GOL ou sem AWB, vincula automaticamente o AWB do CT-e!)
+      if ((!isValidAirAwb(b.awbAereo) || b.aguardandoCteContingencia) && (cte.awbAereo || cte.nOCA || cte.nCT)) {
+        b.awbAereo = cte.awbAereo || cte.nOCA || cte.nCT;
+        b.aguardandoCteContingencia = false;
+      }
       if (!airAwbMatchesCte(b.awbAereo, cte)) {
         structuralDiscrepancies.push({
           field: 'AWB Aéreo',
@@ -4530,6 +4710,79 @@
       return null;
     }
 
+    async function pushCteAwbToGestaoMinutas(blockObj, awbVal, cteObj = null) {
+      if (!blockObj || !awbVal) return;
+      const cleanAwb = String(awbVal || '').trim();
+      if (!cleanAwb || cleanAwb.toUpperCase() === 'AGUARDANDO_CTE') return;
+      const expDest = exportDestNameForMinutaWeb(blockObj.id, blockObj.dest);
+      const dtBr = formatDateBr(state.flightDate);
+      const opAlvo = state.targetMinutasOpName || state.opName || `Operação ${dtBr}`;
+
+      const eventPayload = {
+        type: 'CTE_AWB_VINCULADA_CONTROLE',
+        operacao: opAlvo,
+        flightDateBr: dtBr,
+        bloco_id: blockObj.id,
+        destino: expDest,
+        cia: blockObj.cia,
+        awb_aereo: cleanAwb,
+        nCT: (cteObj && cteObj.nCT) || '',
+        ts: Date.now()
+      };
+
+      try {
+        localStorage.setItem('fedex_cte_awb_auto_sync', JSON.stringify(eventPayload));
+      } catch (e) {}
+      try {
+        if (localBroadcast) localBroadcast.postMessage(eventPayload);
+      } catch (e) {}
+      try {
+        if (minutasChannel) {
+          minutasChannel.send({ type: 'broadcast', event: 'CTE_AWB_VINCULADA_CONTROLE', payload: eventPayload });
+        }
+      } catch (e) {}
+
+      // Atualiza também diretamente na tabela 'minutas' do Supabase para que o Gestão de Minutas já fique com o AWB salvo mesmo se estiver fechado
+      try {
+        const hdrs = {
+          apikey: MINUTAS_SUPABASE_KEY,
+          Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        };
+        const activeOpNames = await fetchActiveMinutasOpNames();
+        const matchingOps = Array.from(activeOpNames).filter(op => op === opAlvo || op.includes(dtBr));
+        const targetOpName = matchingOps[0] || opAlvo;
+        const qUrl = `https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,destino,cia,status,operacao,dados&operacao=eq.${encodeURIComponent(targetOpName)}&id=not.like.__SYS_*`;
+        const rList = await fetch(qUrl, { headers: hdrs });
+        if (!rList.ok) return;
+        const rows = await rList.json();
+        if (!Array.isArray(rows)) return;
+
+        const targetMinuta = rows.find(m => {
+          if (String(m.cia || '').toUpperCase() !== String(blockObj.cia || '').toUpperCase()) return false;
+          const mBloco = String(m.dados?.BLOCO_ID || '').trim().toUpperCase();
+          const mDest = String(m.destino || '').trim().toUpperCase();
+          if (mBloco && mBloco === String(blockObj.id).toUpperCase()) return true;
+          if (mDest && mDest === expDest.toUpperCase()) return true;
+          return false;
+        });
+
+        if (targetMinuta && targetMinuta.id) {
+          const mergedDados = Object.assign({}, targetMinuta.dados || {}, {
+            awb: cleanAwb,
+            awb_pendente_manual: false,
+            aguardando_cte_contingencia: false
+          });
+          const newStatus = (targetMinuta.status === 'CONCLUÍDA' || mergedDados.modo_manual_gol) ? 'CONCLUÍDA' : targetMinuta.status;
+          await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?id=eq.${encodeURIComponent(targetMinuta.id)}`, {
+            method: 'PATCH',
+            headers: { ...hdrs, Prefer: 'return=minimal' },
+            body: JSON.stringify({ status: newStatus, dados: mergedDados })
+          });
+        }
+      } catch (e) {}
+    }
+
     async function handleImportCteXmlFiles(event) {
       const files = Array.from(event.target.files || []);
       event.target.value = '';
@@ -4551,12 +4804,17 @@
             unmatchedFiles.push(`${file.name} (${cte.destIata || '?'} / AWB ${cte.awbAereo || '?'})`);
             continue;
           }
-          // Se o bloco estava sem AWB Aéreo preenchido e casou pelas AWBs da FedEx/Destino, preenche o AWB Aéreo do CT-e
-          if (!isValidAirAwb(targetBlock.awbAereo) && cte.awbAereo) {
-            targetBlock.awbAereo = cte.awbAereo;
+          // Preenche o AWB Aéreo do CT-e se o bloco estava em contingência (Aguardando CT-e) ou sem AWB Aéreo, e envia na hora para o Gestão de Minutas!
+          const cteAwbResolved = cte.awbAereo || cte.nOCA || cte.nCT || '';
+          if (cteAwbResolved && (!isValidAirAwb(targetBlock.awbAereo) || targetBlock.aguardandoCteContingencia)) {
+            targetBlock.awbAereo = cteAwbResolved;
+            targetBlock.aguardandoCteContingencia = false;
           }
           state.ctes[targetBlock.id] = cte;
           matchedCount++;
+          if (cteAwbResolved || isValidAirAwb(targetBlock.awbAereo)) {
+            pushCteAwbToGestaoMinutas(targetBlock, cteAwbResolved || targetBlock.awbAereo, cte);
+          }
 
           const evalRes = evaluateBlockStatusAndCte(targetBlock, true);
           if (evalRes.status === 'PRONTO_PRE_ALERTA' || evalRes.status === 'PRE_ALERTA_CONCLUIDO') {
@@ -4668,7 +4926,11 @@
       const cte = state.ctes && state.ctes[blockId];
       if (!b || !cte) return;
       if (cte.orig) b.orig = cte.orig;
-      if (cte.awbAereo) b.awbAereo = cte.awbAereo;
+      if (cte.awbAereo || cte.nOCA || cte.nCT) {
+        b.awbAereo = cte.awbAereo || cte.nOCA || cte.nCT;
+        b.aguardandoCteContingencia = false;
+        pushCteAwbToGestaoMinutas(b, b.awbAereo, cte);
+      }
       if (Number(cte.vol) >= 0) {
         const prevCalc = b.manualVolBaseCalc !== undefined ? b.manualVolBaseCalc : Number(b.vol || 0);
         b.vol = Number(cte.vol);
@@ -5353,9 +5615,12 @@
                 ${cteBannerHtml}
                 ${String(b.id) === 'FORTALEZA_FORMAL' ? buildFormalBlockControlBarHtml(b) : ''}
 
-                <div class="flex items-center justify-between gap-2 bg-slate-50/90 dark:bg-slate-800/60 p-2.5 rounded-xl border border-slate-200/80 dark:border-slate-700/80">
-                  <span class="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase">AWB Aéreo:</span>
-                  <input type="text" value="${b.awbAereo || ''}" placeholder="${b.cia === 'LATAM' ? '957-00000000' : '12700000000'}"
+                <div class="flex items-center justify-between gap-2 ${(!isValidAirAwb(b.awbAereo) && b.aguardandoCteContingencia) ? 'bg-indigo-50/90 dark:bg-indigo-950/40 border-indigo-400/70 dark:border-indigo-500/60' : 'bg-slate-50/90 dark:bg-slate-800/60 border-slate-200/80 dark:border-slate-700/80'} p-2.5 rounded-xl border">
+                  <div class="flex items-center gap-1.5 min-w-0">
+                    <span class="font-semibold text-slate-500 dark:text-slate-400 text-[11px] uppercase">AWB Aéreo:</span>
+                    ${(!isValidAirAwb(b.awbAereo) && b.aguardandoCteContingencia) ? '<span class="px-1.5 py-0.5 rounded bg-indigo-600 text-white font-extrabold text-[9px] uppercase whitespace-nowrap" title="Minuta GOL concluída em contingência no Gestão de Minutas. Anexe o XML do CT-e para preencher e enviar o AWB automaticamente!">⏳ Aguardando CT-e</span>' : ''}
+                  </div>
+                  <input type="text" value="${b.awbAereo || ''}" placeholder="${(!isValidAirAwb(b.awbAereo) && b.aguardandoCteContingencia) ? 'Anexe o XML CT-e...' : (b.cia === 'LATAM' ? '957-00000000' : '12700000000')}"
                     onchange="updateBlockAirAwb('${b.id}', this.value)"
                     class="font-mono font-bold text-xs text-right bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 w-40 focus:outline-none focus:ring-2 focus:ring-purple-600" />
                 </div>
@@ -5390,12 +5655,18 @@
                       </div>
                     `;
                   }).join('')}
-                  ${dgAwbs.map(a => `
-                    <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg ${state.recusas.includes(a) ? 'bg-yellow-200 text-yellow-950' : 'bg-red-600 text-white'} font-mono text-[11px] font-bold">
-                      <span>AWB DG: ${a}</span>
-                      <span>${state.recusas.includes(a) ? 'RECUSADA' : 'DG ATIVO'}</span>
-                    </div>
-                  `).join('')}
+                  ${dgAwbs.map(a => {
+                    const isRec = state.recusas.includes(a);
+                    const isFora = state.foraDoVoo.includes(a);
+                    const cls = isRec ? 'bg-yellow-200 text-yellow-950' : (isFora ? 'bg-neutral-300 text-neutral-900' : 'bg-red-600 text-white');
+                    const statusLbl = isRec ? 'RECUSADA' : (isFora ? 'FORA DO VOO' : 'DG ATIVO');
+                    return `
+                      <div class="flex items-center justify-between px-2.5 py-1.5 rounded-lg ${cls} font-mono text-[11px] font-bold">
+                        <span>AWB DG: ${a}</span>
+                        <span>${statusLbl}</span>
+                      </div>
+                    `;
+                  }).join('')}
                   ${palletAwbs.map(a => {
                     const pInfo = (state.pallets && state.pallets[a]) || {};
                     const pVol = Math.max(1, Number(pInfo.vol || 1));
@@ -5452,6 +5723,10 @@
         }
       }
       b.awbAereo = clean;
+      if (isValidAirAwb(clean)) {
+        b.aguardandoCteContingencia = false;
+        pushCteAwbToGestaoMinutas(b, clean, state.ctes && state.ctes[b.id]);
+      }
       reconcileAllCtesWithBlocks();
       saveCatalogAndState();
       renderMainBlocks();
@@ -7381,18 +7656,35 @@
         const matchesDate = opStr.includes(dtBr);
         if (!matchesTarget && !matchesDate) return;
       }
-      if (data.type === 'AWB_AEREA_GERADA' || data.awb_aereo || data.awbAereo) {
+      if (data.type === 'AWB_AEREA_GERADA' || data.awb_aereo || data.awbAereo || data.aguardando_cte) {
         const bId = data.bloco_id || data.blocoId;
         const dest = data.destino || '';
-        const awbVal = data.awb_aereo || data.awbAereo;
+        const awbVal = String(data.awb_aereo || data.awbAereo || '').trim();
+        const isWaitingCte = Boolean(data.aguardando_cte || awbVal.toUpperCase() === 'AGUARDANDO_CTE' || awbVal.toUpperCase() === 'AGUARDANDO CT-E');
         let matched = state.blocks.find(b => b.id === bId);
         if (!matched && dest) {
           matched = state.blocks.find(b => exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === String(dest).toUpperCase());
         }
-        if (matched && awbVal && matched.awbAereo !== awbVal) {
-          updateBlockAirAwb(matched.id, awbVal);
-          renderAll();
-          showToast(`⚡ AWB Aérea ${awbVal} recebida automaticamente para ${exportDestNameForMinutaWeb(matched.id, matched.dest)}!`);
+        if (matched) {
+          if (isWaitingCte) {
+            matched.aguardandoCteContingencia = true;
+            // Se o CT-e XML já tiver sido importado no Controle Operacional para este bloco, já devolve o AWB na hora para o Gestão de Minutas!
+            const existingCte = state.ctes && state.ctes[matched.id];
+            const cteAwbNow = (existingCte && (existingCte.awbAereo || existingCte.nOCA || existingCte.nCT)) || (isValidAirAwb(matched.awbAereo) ? matched.awbAereo : '');
+            if (cteAwbNow) {
+              matched.awbAereo = cteAwbNow;
+              matched.aguardandoCteContingencia = false;
+              pushCteAwbToGestaoMinutas(matched, cteAwbNow, existingCte);
+            }
+            saveCatalogAndState();
+            renderAll();
+            showToast(`⏳ Minuta GOL (${exportDestNameForMinutaWeb(matched.id, matched.dest)}) concluída em contingência: Aguardando CT-e!`);
+          } else if (awbVal && matched.awbAereo !== awbVal) {
+            matched.aguardandoCteContingencia = false;
+            updateBlockAirAwb(matched.id, awbVal);
+            renderAll();
+            showToast(`⚡ AWB Aérea ${awbVal} recebida automaticamente para ${exportDestNameForMinutaWeb(matched.id, matched.dest)}!`);
+          }
         }
       } else if (Array.isArray(data.items)) {
         let count = 0;
@@ -7494,7 +7786,7 @@
         const targetOp = matchingActiveOps[0];
 
         // 2. Busca APENAS as minutas pertencentes à operação ativa (usando filtro operacao=eq no servidor + projeção leve JSONB)
-        const res = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,destino,cia,status,operacao,bloco_id:dados->>BLOCO_ID,awb:dados->>awb&id=not.like.__SYS_*&operacao=eq.${encodeURIComponent(targetOp)}`, {
+        const res = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,destino,cia,status,operacao,bloco_id:dados->>BLOCO_ID,awb:dados->>awb,modo_manual_gol:dados->modo_manual_gol,awb_pendente_manual:dados->awb_pendente_manual,aguardando_cte_contingencia:dados->aguardando_cte_contingencia&id=not.like.__SYS_*&operacao=eq.${encodeURIComponent(targetOp)}`, {
           headers: {
             apikey: MINUTAS_SUPABASE_KEY,
             Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
@@ -7505,8 +7797,13 @@
         const rows = await res.json();
         if (!Array.isArray(rows)) return;
 
-        // Se a operação ativa no Gestão de Minutas está limpa (0 minutas ou 0 AWBs preenchidas) e nossa operação local tinha AWBs herdadas indevidamente da operação finalizada anterior, limpa automaticamente!
-        const validRowsWithAwb = rows.filter(r => r && r.id && r.operacao === targetOp && String(r.awb || '').trim().length > 0);
+        // Inclui tanto minutas com AWB preenchida quanto minutas GOL concluídas em contingência (aguardando CT-e)
+        const validRowsWithAwb = rows.filter(r => {
+          if (!r || !r.id || r.operacao !== targetOp) return false;
+          const hasAwbStr = String(r.awb || '').trim().length > 0;
+          const isContingenciaConcluida = String(r.cia || '').toUpperCase() === 'GOL' && r.status === 'CONCLUÍDA' && Boolean(r.modo_manual_gol || r.awb_pendente_manual || r.aguardando_cte_contingencia);
+          return hasAwbStr || isContingenciaConcluida;
+        });
         if (validRowsWithAwb.length === 0) {
           if (!state.cleanedGhostMinutasAwbsV2) {
             let hadGhostAwbs = false;
@@ -7531,15 +7828,29 @@
           // Ignora completamente qualquer registro que não pertença exatamente à operação ativa atual
           if (r.operacao !== targetOp || !activeOpNames.has(r.operacao)) continue;
           const awbVal = String(r.awb || '').trim();
-          if (!awbVal) continue;
+          const isWaitingCte = (!awbVal || awbVal.toUpperCase() === 'AGUARDANDO_CTE') && Boolean(r.modo_manual_gol || r.awb_pendente_manual || r.aguardando_cte_contingencia);
           const bId = r.bloco_id || '';
           const dest = String(r.destino || '').trim();
           let matched = state.blocks.find(b => b.id === bId);
           if (!matched && dest) {
             matched = state.blocks.find(b => exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === dest.toUpperCase());
           }
-          if (matched && matched.awbAereo !== awbVal) {
+          if (!matched) continue;
+          if (isWaitingCte) {
+            const existingCte = state.ctes && state.ctes[matched.id];
+            const cteAwbNow = (existingCte && (existingCte.awbAereo || existingCte.nOCA || existingCte.nCT)) || (isValidAirAwb(matched.awbAereo) ? matched.awbAereo : '');
+            if (cteAwbNow) {
+              matched.awbAereo = cteAwbNow;
+              matched.aguardandoCteContingencia = false;
+              pushCteAwbToGestaoMinutas(matched, cteAwbNow, existingCte);
+              updatedCount++;
+            } else if (!matched.aguardandoCteContingencia) {
+              matched.aguardandoCteContingencia = true;
+              updatedCount++;
+            }
+          } else if (awbVal && matched.awbAereo !== awbVal) {
             matched.awbAereo = awbVal;
+            matched.aguardandoCteContingencia = false;
             updatedCount++;
           }
         }
@@ -8276,24 +8587,30 @@
       const consMap = new Map(state.cons.map(c => [c.cons, c]));
       const groups = new Map();
       const seenAwbsGlobal = new Set();
+      const seenStrippedGlobal = new Set();
 
       for (const r of state.report) {
         const awb = String(r[0] || '').replace(/\D/g, '');
-        const cons = String(r[1] || '').replace(/\D/g, '');
-        if (!awb || seenAwbsGlobal.has(awb)) continue;
+        const cons = String(r[1] || '').trim();
+        const consDigits = cons.replace(/\D/g, '');
+        const strippedAwb = awb.replace(/^0+/, '') || awb;
+        if (!awb || seenAwbsGlobal.has(awb) || seenStrippedGlobal.has(strippedAwb)) continue;
         const rawBrl = Number(r[10] || 0);
         // Regra obrigatória LATAM: se o valor vier zerado (<= 0), assume 1.00 BRL
         const valBrl = rawBrl > 0 ? Number(rawBrl.toFixed(2)) : 1.00;
         if (state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) continue;
         const isPalletAwb = Boolean(state.pallets && state.pallets[awb]);
-        if (!consMap.has(cons) && !isPalletAwb) continue;
-        const blockId = getCurrentBlockForAwb(awb, cons);
+        const isDgAwb = Boolean(state.dgs && state.dgs.includes(awb));
+        const isMovedAwb = Boolean((state.movimentacoes && (state.movimentacoes[awb] || (cons && state.movimentacoes[cons]) || (consDigits && state.movimentacoes[consDigits]))) || r._manualDest);
+        if (consMap.size > 0 && !consMap.has(cons) && !consMap.has(consDigits) && !isPalletAwb && !isDgAwb && !isMovedAwb) continue;
+        const blockId = getCurrentBlockForAwb(awb, consDigits || cons);
         const blockObj = state.blocks.find(b => b.id === blockId);
         if (!blockObj) continue;
         const cia = String(blockObj.cia || '').toUpperCase() === 'TAM' ? 'LATAM' : String(blockObj.cia || '').toUpperCase();
         if (cia !== 'LATAM') continue;
 
         seenAwbsGlobal.add(awb);
+        seenStrippedGlobal.add(strippedAwb);
         if (!groups.has(blockId)) {
           groups.set(blockId, { block: blockObj, awbs: [] });
         }
@@ -8329,11 +8646,14 @@
         ];
         ws.getRow(1).font = { bold: true };
         const seenBlockAwbs = new Set();
+        const seenBlockStripped = new Set();
         const uniqueAwbs = [];
         for (const item of awbs) {
           const numLimpo = String(item.awb || '').replace(/\D/g, '');
-          if (!numLimpo || seenBlockAwbs.has(numLimpo)) continue;
+          const numStripped = numLimpo.replace(/^0+/, '') || numLimpo;
+          if (!numLimpo || seenBlockAwbs.has(numLimpo) || seenBlockStripped.has(numStripped)) continue;
           seenBlockAwbs.add(numLimpo);
+          seenBlockStripped.add(numStripped);
           uniqueAwbs.push({ ...item, awb: numLimpo });
           const row = ws.addRow(['000', numLimpo, '00', dateFormatted, item.valBrl]);
           row.getCell(5).numFmt = '0.00';
@@ -13844,15 +14164,25 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
       const wantsDg = isDgChecked ||
                       String(targetBlockId).endsWith('|DG') ||
-                      /\bDG$/.test(newDest) ||
-                      /\bDG$/.test(iataTyped);
+                      /\bDG\b/i.test(newDest) ||
+                      /\bDG\b/i.test(iataTyped);
+      const wantsPallet = !wantsDg && (
+                      String(targetBlockId).endsWith('|PALLET') ||
+                      /\bPALLET\b/i.test(newDest) ||
+                      /\bPALLET\b/i.test(iataTyped)
+      );
+      const wantsFormal = !wantsDg && !wantsPallet && (
+                      targetBlockId === 'FORTALEZA_FORMAL' ||
+                      /\bFORMAL\b/i.test(newDest) ||
+                      /\bFORMAL\b/i.test(iataTyped)
+      );
 
       // Verifica se é uma CONS da operação
       const consObj = state.cons.find(c => c.cons === cleanDigits || c.cons === cleanDigits.padStart(12, '0'));
 
-      // Se digitou um destino como "RECA DG" ou "RECA" em Novo Bloco Extra ou no campo IATA sem clicar na lista
+      // Se digitou um destino como "RECA DG", "VIXA PALLET", "FOR FORMAL" ou "RECA" em Novo Bloco Extra ou no campo IATA
       const rawDestCandidate = newDest || (!targetBlockId ? iataTyped : '');
-      const cleanBaseDest = rawDestCandidate.replace(/\s+(?:DG|PALLET)$/i, '').trim().toUpperCase();
+      const cleanBaseDest = rawDestCandidate.replace(/\s+(?:DG|PALLET|FORMAL)$/i, '').trim().toUpperCase();
 
       if (wantsDg) {
         // Resolve o bloco base para o bloco DG (ex: RECA DG -> RECA|DG)
@@ -13868,18 +14198,18 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         }
         targetBlockId = baseBlockId + '|DG';
 
-        // Promove ou cria a AWB no relatório ativo para que o bloco DG seja criado e contabilizado
+        // Promove ou cria a AWB no relatório ativo para que o bloco DG seja criado e contabilizado sem duplicar
         const promoted = promoteAwbIntoActiveReport(cleanDigits, cleanBaseDest || baseBlockId, manualPesoVal);
         const finalAwb = promoted ? promoted.awb : cleanDigits.padStart(12, '0');
 
         if (!state.dgs.includes(finalAwb)) state.dgs.push(finalAwb);
+        if (state.pallets && state.pallets[finalAwb]) delete state.pallets[finalAwb];
         state.recusas = state.recusas.filter(x => x !== finalAwb);
         state.foraDoVoo = state.foraDoVoo.filter(x => x !== finalAwb);
         state.movimentacoes[finalAwb] = targetBlockId;
 
         recalculateVolumesFromReport(false);
 
-        // Se o usuário preencheu Origem/Cia na caixa de Novo Bloco Extra (ex: GRU / LATAM / RECA DG), aplica ao bloco DG
         if (newDest) {
           const dgBlk = state.blocks.find(b => b.id === targetBlockId);
           if (dgBlk) {
@@ -13897,10 +14227,64 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         return;
       }
 
-      if (!targetBlockId && newDest) {
-        // Verifica se corresponde a um bloco padrão antes de criar MOV|
-        const matchedExisting = state.blocks.find(b => b.id === newDest || exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === newDest);
-        if (matchedExisting && !newDest.includes('PALLET')) {
+      if (wantsPallet) {
+        let baseBlockId = '';
+        if (targetBlockId) {
+          baseBlockId = normalizePalletBaseId(targetBlockId);
+        } else if (cleanBaseDest) {
+          baseBlockId = normalizePalletBaseId(determineBlockId(cleanBaseDest, 'CAIXAS'));
+        }
+        if (!baseBlockId) {
+          showToast('Informe o destino para o Bloco PALLET (ex: VIXA PALLET, RECA PALLET...).');
+          return;
+        }
+        targetBlockId = baseBlockId + '|PALLET';
+
+        const promoted = promoteAwbIntoActiveReport(cleanDigits, cleanBaseDest || baseBlockId, manualPesoVal);
+        const finalAwb = promoted ? promoted.awb : cleanDigits.padStart(12, '0');
+        const rowWt = (promoted && promoted.row && Number(promoted.row[5]) > 0) ? Number(promoted.row[5]) : manualPesoVal;
+
+        if (!state.pallets) state.pallets = {};
+        state.pallets[finalAwb] = {
+          awb: finalAwb,
+          dest: cleanBaseDest || baseBlockId,
+          baseId: baseBlockId,
+          vol: state.pallets[finalAwb] ? Math.max(1, Number(state.pallets[finalAwb].vol || 1)) : 1,
+          peso: state.pallets[finalAwb] && Number(state.pallets[finalAwb].peso) > 0 ? Number(state.pallets[finalAwb].peso) : rowWt
+        };
+        state.dgs = state.dgs.filter(x => x !== finalAwb);
+        state.recusas = state.recusas.filter(x => x !== finalAwb);
+        state.foraDoVoo = state.foraDoVoo.filter(x => x !== finalAwb);
+        state.movimentacoes[finalAwb] = targetBlockId;
+
+        recalculateVolumesFromReport(false);
+
+        if (newDest) {
+          const pltBlk = state.blocks.find(b => b.id === targetBlockId);
+          if (pltBlk) {
+            pltBlk.orig = newOrig;
+            pltBlk.cia = newCia;
+            pltBlk.manualMalhaOverride = true;
+          }
+        }
+
+        saveCatalogAndState();
+        renderAll();
+        closeModal();
+        const pltBlkFinal = state.blocks.find(b => b.id === targetBlockId);
+        showToast(`📦 AWB ${finalAwb} movida para o bloco ${pltBlkFinal ? pltBlkFinal.dest : targetBlockId}!`);
+        return;
+      }
+
+      if (wantsFormal) {
+        targetBlockId = 'FORTALEZA_FORMAL';
+      } else if (!targetBlockId && newDest) {
+        const matchedExisting = state.blocks.find(b =>
+          b.id === newDest ||
+          exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === newDest ||
+          b.id === determineBlockId(newDest, 'CAIXAS')
+        );
+        if (matchedExisting) {
           targetBlockId = matchedExisting.id;
         } else {
           targetBlockId = `MOV|${newOrig}|${newCia}|${newDest}`;
