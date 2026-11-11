@@ -1234,29 +1234,71 @@
 
     window._formalPdfMemCache = window._formalPdfMemCache || {};
 
+    function openFormalIdb() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) return resolve(null);
+        try {
+          const req = window.indexedDB.open('fedex_controle_formal_idb_v1', 1);
+          req.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains('pdfs')) db.createObjectStore('pdfs');
+          };
+          req.onsuccess = (e) => resolve(e.target.result);
+          req.onerror = () => resolve(null);
+        } catch (e) {
+          resolve(null);
+        }
+      });
+    }
+
     function saveFormalPdfLocalCache(opId, pdfB64) {
-      if (!opId || !pdfB64) return;
+      if (!opId || !pdfB64 || pdfB64.length < 100) return;
       window._formalPdfMemCache[opId] = pdfB64;
-      try {
-        sessionStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64);
-      } catch (e) {}
-      try {
-        localStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64);
-      } catch (e) {}
+      try { sessionStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64); } catch (e) {}
+      try { localStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64); } catch (e) {}
+      openFormalIdb().then(db => {
+        if (!db) return;
+        try {
+          const tx = db.transaction('pdfs', 'readwrite');
+          tx.objectStore('pdfs').put(pdfB64, opId);
+        } catch (e) {}
+      });
     }
 
     function loadFormalPdfLocalCache(opId) {
       if (!opId) return '';
-      if (window._formalPdfMemCache && window._formalPdfMemCache[opId]) {
+      if (window._formalPdfMemCache && window._formalPdfMemCache[opId] && window._formalPdfMemCache[opId].length > 100) {
         return window._formalPdfMemCache[opId];
       }
       try {
         const s = sessionStorage.getItem('fedex_formal_pdf_b64_' + opId) || localStorage.getItem('fedex_formal_pdf_b64_' + opId) || '';
-        if (s) window._formalPdfMemCache[opId] = s;
-        return s;
-      } catch (e) {
-        return '';
-      }
+        if (s && s.length > 100) {
+          window._formalPdfMemCache[opId] = s;
+          return s;
+        }
+      } catch (e) {}
+      return '';
+    }
+
+    function hydrateFormalPdfFromIdb(opId) {
+      if (!opId) return;
+      openFormalIdb().then(db => {
+        if (!db) return;
+        try {
+          const tx = db.transaction('pdfs', 'readonly');
+          const req = tx.objectStore('pdfs').get(opId);
+          req.onsuccess = () => {
+            const val = req.result;
+            if (val && typeof val === 'string' && val.length > 100) {
+              window._formalPdfMemCache[opId] = val;
+              if (state && state.opId === opId && state.formalDoc && !state.formalDoc.pdfB64) {
+                state.formalDoc.pdfB64 = val;
+                if (currentScreen === 'workspace') renderAll();
+              }
+            }
+          };
+        } catch (e) {}
+      });
     }
 
     function buildSlimSnapshotForCatalog(st) {
@@ -1265,10 +1307,9 @@
         if (clone.opId) {
           saveFormalPdfLocalCache(clone.opId, clone.formalDoc.pdfB64);
         }
-        // Se o PDF em Base64 tiver mais de 250 KB, não duplica dentro do snapshot do catálogo para não estourar localStorage/Supabase
-        if (String(clone.formalDoc.pdfB64).length > 250000) {
+        // Mantém o PDF comprimido (até 900 KB) direto no snapshot para nunca perder a referência!
+        if (String(clone.formalDoc.pdfB64).length > 900000) {
           clone.formalDoc.pdfB64 = '';
-          clone.formalDoc.storedInLocalCache = true;
         }
       }
       return clone;
@@ -2152,6 +2193,7 @@
       if (state.formalDoc && state.formalDoc.attached && !state.formalDoc.pdfB64) {
         const cachedPdf = loadFormalPdfLocalCache(state.opId);
         if (cachedPdf) state.formalDoc.pdfB64 = cachedPdf;
+        else hydrateFormalPdfFromIdb(state.opId);
       }
 
       if (state.status !== 'FINALIZADA') {
@@ -8200,30 +8242,66 @@
       };
 
       try {
-        // Se algum DOC_FORMAL_PDF_B64 ainda for muito grande (> 1.5 MB), envia primeiro sem o PDF pesado ou comprime, evitando timeout do Supabase
-        const totalJsonLen = JSON.stringify(enrichedRows).length;
-        let res = null;
-        if (totalJsonLen <= 2200000) {
-          res = await postSyncRows(enrichedRows);
-        }
-        // Fallback automático: se o banco rejeitar ou der timeout por tamanho do PDF Formal, envia o pacote enxuto (com FORMAL_META e Excel) para nunca falhar!
+        let res = await postSyncRows(enrichedRows);
         if (!res || !res.ok) {
+          // Se o pacote completo excedeu o limite por causa do PDF Formal, envia o pacote de linhas e injeta o PDF Formal separadamente na minuta do Formal
           const slimRows = enrichedRows.map(r => ({
             ...r,
-            DOC_FORMAL_PDF_B64: (r.DOC_FORMAL_PDF_B64 && r.DOC_FORMAL_PDF_B64.length <= 600000) ? r.DOC_FORMAL_PDF_B64 : ''
+            DOC_FORMAL_PDF_B64: ''
           }));
           res = await postSyncRows(slimRows);
         }
-        if (!res || !res.ok) {
-          // Último nível de segurança: envia apenas os dados estruturados dos blocos
-          const ultraSlimRows = enrichedRows.map(r => ({
-            ...r,
-            DOC_FORMAL_PDF_B64: '',
-            DOC_EXCEL_B64: ''
-          }));
-          res = await postSyncRows(ultraSlimRows);
-        }
         if (!res || !res.ok) throw new Error('Falha ao gravar pacote no banco do Gestão de Minutas.');
+
+        // INJEÇÃO DIRETA GARANTIDA DO PDF FORMAL NA MINUTA "FORA FORMAL" DO GESTÃO DE MINUTAS:
+        // Caso a minuta FORA FORMAL já exista na operação do Gestão de Minutas (ou assim que for criada),
+        // grava diretamente o doc_formal_pdf_b64, doc_formal_pdf_nome, formal_meta e doc_excel_b64 na linha da minuta no Supabase!
+        const formalRow = enrichedRows.find(r => r.BLOCO_ID === 'FORTALEZA_FORMAL' || String(r.DESTINO || '').toUpperCase().includes('FORMAL'));
+        if (formalRow && formalRow.DOC_FORMAL_PDF_B64) {
+          const injectFormalPdfIntoMinutaRow = async () => {
+            try {
+              const qUrl = `https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,destino,dados&operacao=eq.${encodeURIComponent(targetOpNome)}&id=not.like.__SYS_*`;
+              const rList = await fetch(qUrl, { headers: { apikey: MINUTAS_SUPABASE_KEY, Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}` } });
+              if (!rList.ok) return false;
+              const minRows = await rList.json();
+              if (!Array.isArray(minRows)) return false;
+              const targetMin = minRows.find(m =>
+                String(m.destino || '').toUpperCase().includes('FORMAL') ||
+                String(m.dados?.BLOCO_ID || '').toUpperCase() === 'FORTALEZA_FORMAL'
+              );
+              if (!targetMin || !targetMin.id) return false;
+              const mergedDados = Object.assign({}, targetMin.dados || {}, {
+                doc_formal_pdf_b64: formalRow.DOC_FORMAL_PDF_B64,
+                doc_formal_pdf_nome: formalRow.DOC_FORMAL_PDF_NOME || 'FORMAL.pdf',
+                formal_meta: formalRow.FORMAL_META || targetMin.dados?.formal_meta || null
+              });
+              if (formalRow.DOC_EXCEL_B64) {
+                mergedDados.doc_excel_b64 = formalRow.DOC_EXCEL_B64;
+                mergedDados.doc_excel_nome = formalRow.DOC_EXCEL_NOME || 'FORA FORMAL.xlsx';
+              }
+              if (mergedDados.remessa && formalRow.VALOR_TOTAL) {
+                mergedDados.remessa.Valor = formalRow.VALOR_TOTAL;
+              }
+              await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?id=eq.${encodeURIComponent(targetMin.id)}`, {
+                method: 'PATCH',
+                headers: {
+                  apikey: MINUTAS_SUPABASE_KEY,
+                  Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+                  'Content-Type': 'application/json',
+                  Prefer: 'return=minimal'
+                },
+                body: JSON.stringify({ dados: mergedDados })
+              });
+              return true;
+            } catch (err) {
+              return false;
+            }
+          };
+          // Executa imediatamente (caso a minuta já exista lá) e agenda mais 2 confirmações (após o operador distribuir as minutas no Gestão de Minutas)
+          await injectFormalPdfIntoMinutaRow();
+          setTimeout(() => injectFormalPdfIntoMinutaRow(), 3500);
+          setTimeout(() => injectFormalPdfIntoMinutaRow(), 8000);
+        }
 
         // Dispara o aviso em tempo real DEPOIS que o registro já está gravado como PENDENTE no Supabase!
         try {
@@ -8235,7 +8313,7 @@
           }
         } catch (e) {}
 
-        showToast(`🚀 ${enrichedRows.length} blocos + ${zipBundle.filesCount} planilhas LATAM (.zip integrado) enviados para "${targetOpNome}"!`);
+        showToast(`🚀 ${enrichedRows.length} blocos + ${zipBundle.filesCount} planilhas LATAM (.zip integrado)${formalRow && formalRow.DOC_FORMAL_PDF_B64 ? ' + PDF Formal' : ''} enviados para "${targetOpNome}"!`);
       } catch (e) {
         showToast('Aviso ao gravar no banco de minutas: ' + e.message);
       }
@@ -14475,12 +14553,25 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       return state.blocks.find(b => String(b.id) === 'FORTALEZA_FORMAL' || exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase().includes('FORMAL')) || null;
     }
 
+    function getResolvedFormalPdfB64() {
+      const fDoc = state && state.formalDoc;
+      if (!fDoc) return '';
+      const direct = (fDoc.pdfB64 && String(fDoc.pdfB64).length > 100) ? fDoc.pdfB64 : '';
+      if (direct) return direct;
+      const cached = loadFormalPdfLocalCache(state.opId);
+      if (cached && cached.length > 100) {
+        fDoc.pdfB64 = cached;
+        return cached;
+      }
+      return '';
+    }
+
     function isFormalLockActive() {
       const fb = getFormalBlockObj();
       if (!fb || Number(fb.vol || 0) <= 0) return false;
       const fDoc = state.formalDoc;
-      const hasPdf = Boolean(fDoc && (fDoc.pdfB64 || fDoc.storedInLocalCache || loadFormalPdfLocalCache(state.opId)));
-      if (fDoc && fDoc.attached && Number(fDoc.valorTotalNf || 0) > 0 && hasPdf) {
+      const actualPdf = getResolvedFormalPdfB64();
+      if (fDoc && fDoc.attached && Number(fDoc.valorTotalNf || 0) > 0 && actualPdf.length > 100) {
         return false;
       }
       return true;
@@ -14488,8 +14579,8 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
     function buildFormalBlockControlBarHtml(b) {
       const fDoc = state.formalDoc || {};
-      const hasPdf = Boolean(fDoc.pdfB64 || fDoc.storedInLocalCache || loadFormalPdfLocalCache(state.opId));
-      const isAttached = Boolean(fDoc.attached && hasPdf && Number(fDoc.valorTotalNf || 0) > 0);
+      const actualPdf = getResolvedFormalPdfB64();
+      const isAttached = Boolean(fDoc.attached && actualPdf.length > 100 && Number(fDoc.valorTotalNf || 0) > 0);
       if (isAttached) {
         return `
           <div class="p-2.5 rounded-xl bg-emerald-950/85 border border-emerald-500/70 text-emerald-100 space-y-1.5">
@@ -14576,25 +14667,25 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const pagePreviews = [];
       const allCompressedPages = [];
 
-      const needCompression = origByteLen > 450 * 1024 && window.jspdf && window.jspdf.jsPDF;
+      const needCompression = origByteLen > 180 * 1024 && window.jspdf && window.jspdf.jsPDF;
       const totalPagesToRender = needCompression ? Math.min(pdf.numPages, 8) : Math.min(pdf.numPages, 3);
 
       for (let p = 1; p <= totalPagesToRender; p++) {
         const page = await pdf.getPage(p);
+        const viewport = page.getViewport({ scale: 1.25 });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.62);
+        allCompressedPages.push({ dataUrl, w: viewport.width, h: viewport.height });
+
         if (p <= 3) {
           const textContent = await page.getTextContent();
           const layerStr = textContent.items.map(it => it.str).join(' ').trim();
           combinedText += '\n' + layerStr;
-
-          const viewport = page.getViewport({ scale: 1.55 });
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
           pagePreviews.push({ pageNum: p, dataUrl });
-          allCompressedPages.push({ dataUrl, w: viewport.width, h: viewport.height });
 
           if (layerStr.length < 40 && typeof Tesseract !== 'undefined' && p <= 2) {
             showToast(`🤖 IA lendo página ${p}/${ Math.min(pdf.numPages, 3) } do PDF escaneado (OCR)...`);
@@ -14607,15 +14698,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               console.warn('Aviso OCR Formal p.' + p, e);
             }
           }
-        } else {
-          const viewport = page.getViewport({ scale: 1.4 });
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          const dataUrl = canvas.toDataURL('image/jpeg', 0.68);
-          allCompressedPages.push({ dataUrl, w: viewport.width, h: viewport.height });
         }
       }
 
@@ -14632,7 +14714,11 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             }
             doc.addImage(pg.dataUrl, 'JPEG', 0, 0, pg.w, pg.h, undefined, 'FAST');
           });
-          compressedPdfB64 = doc.output('datauristring');
+          const rawDataUri = doc.output('datauristring');
+          const b64Part = String(rawDataUri).split(',')[1] || '';
+          if (b64Part) {
+            compressedPdfB64 = 'data:application/pdf;base64,' + b64Part;
+          }
         } catch (e) {
           console.warn('Aviso ao comprimir PDF Formal:', e);
         }
