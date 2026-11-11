@@ -2506,17 +2506,23 @@
           || { orig: 'GRU', cia: 'LATAM', dest: baseId };
         const prev = existingDgMap.get(dgId)
           || (baseId === 'BSBA' ? (existingDgMap.get('BRASILIA_CAIXAS|DG') || existingDgMap.get('BRASILIA_SACA|DG')) : null);
-        const activeCount = awbs.filter(a => !state.recusas.includes(a) && !state.foraDoVoo.includes(a)).length;
+        const activeAwbs = awbs.filter(a => !state.recusas.includes(a) && !state.foraDoVoo.includes(a));
+        const activeCount = activeAwbs.length;
+        const reportDgPeso = Math.round(activeAwbs.reduce((acc, a) => {
+          const rRow = (state.report || []).find(x => String(x[0]) === String(a));
+          return acc + (rRow ? Number(rRow[5] || 0) : 0);
+        }, 0) * 100) / 100;
         const dgDestLabel = baseId === 'BSBA' ? 'BSBA DG' : (String(baseBlock.dest || baseId).replace(/\s+DG$/i, '') + ' DG');
         newDgBlocks.push({
           id: dgId,
           orig: (prev && prev.manualMalhaOverride) ? prev.orig : baseBlock.orig,
           cia: (prev && prev.manualMalhaOverride) ? prev.cia : baseBlock.cia,
+          manualMalhaOverride: Boolean(prev && prev.manualMalhaOverride),
           dest: dgDestLabel,
           tipo: 'DG',
           awbAereo: prev ? prev.awbAereo : '',
           vol: activeCount,
-          peso: activeCount === 0 ? 0 : (prev && Number(prev.peso) > 0 ? prev.peso : activeCount * 2)
+          peso: activeCount === 0 ? 0 : (prev && Number(prev.peso) > 0 ? prev.peso : (reportDgPeso > 0 ? reportDgPeso : activeCount * 2))
         });
       }
 
@@ -2590,7 +2596,9 @@
           const cons = String(r[1]);
           const lacre = String(r[2] || '').trim();
           const isPalletAwb = Boolean(state.pallets && state.pallets[awb]);
-          if (consMapForRep.size > 0 && !consMapForRep.has(cons) && !isPalletAwb) continue;
+          const isDgAwb = Boolean(state.dgs && state.dgs.includes(awb));
+          const isMovedAwb = Boolean((state.movimentacoes && (state.movimentacoes[awb] || (cons && state.movimentacoes[cons]))) || r._manualDest);
+          if (consMapForRep.size > 0 && !consMapForRep.has(cons) && !isPalletAwb && !isDgAwb && !isMovedAwb) continue;
           if (seenAwbs.has(awb)) continue;
           seenAwbs.add(awb);
           if (Number(r[7] || 0) <= 0) {
@@ -2645,7 +2653,9 @@
         const cons = String(row[1]);
         if (state.recusas.includes(awb) || state.foraDoVoo.includes(awb)) continue;
         const isPalletAwb = Boolean(state.pallets && state.pallets[awb]);
-        if (consMap.size > 0 && !consMap.has(cons) && !isPalletAwb) continue;
+        const isDgAwb = Boolean(state.dgs && state.dgs.includes(awb));
+        const isMovedAwb = Boolean((state.movimentacoes && (state.movimentacoes[awb] || (cons && state.movimentacoes[cons]))) || row._manualDest);
+        if (consMap.size > 0 && !consMap.has(cons) && !isPalletAwb && !isDgAwb && !isMovedAwb) continue;
         const cObj = consMap.get(cons);
         const blockId = getCurrentBlockForAwb(awb, cons);
         const isSacaRow = cObj ? (cObj.tipo === 'SACA' && cObj.source !== 'DELIVERY') : Boolean(String(row[2] || '').trim());
@@ -3323,28 +3333,164 @@
       );
     }
 
+    // Pool universal de AWBs: busca em state.report, state.allReportRows e state.reportPendencias
+    function getAllSearchableReportRows() {
+      const byAwb = new Map();
+      const activeSet = new Set();
+      if (Array.isArray(state.report)) {
+        for (const r of state.report) {
+          const awb = String(r[0] || '').trim();
+          if (!awb) continue;
+          byAwb.set(awb, r);
+          activeSet.add(awb);
+        }
+      }
+      if (Array.isArray(state.allReportRows)) {
+        for (const r of state.allReportRows) {
+          const awb = String(r[0] || '').trim();
+          if (!awb || byAwb.has(awb)) continue;
+          byAwb.set(awb, r);
+        }
+      }
+      if (Array.isArray(state.reportPendencias)) {
+        for (const p of state.reportPendencias) {
+          if (!p || !p.awb || p.awb === 'SEM AWB') continue;
+          let cleanAwb = String(p.awb).replace(/\D/g, '');
+          if (cleanAwb.length === 11) cleanAwb = '0' + cleanAwb;
+          else if (cleanAwb.length === 10) cleanAwb = '00' + cleanAwb;
+          if (!cleanAwb || byAwb.has(cleanAwb) || byAwb.has(String(p.awb))) continue;
+          const curr = normalizeDreCurrency(p.curr || 'BRL');
+          const rate = curr === 'BRL' ? 1.0 : Number(state.cambio?.[curr]?.rate || 5.5);
+          const val = Math.max(1.0, Number(p.val || 1.0));
+          const brl = Math.max(1.0, Math.round(val * rate * 100) / 100);
+          const tuple = [
+            cleanAwb,
+            String(p.cons && p.cons !== 'SEM CONS' ? p.cons : ('AVULSO_' + cleanAwb.slice(-4))),
+            String(p.lacre || ''),
+            String(p.co || ''),
+            String(p.city || ''),
+            Math.max(0.5, Number(p.wt || 1.0)),
+            String(p.destLoc || p.sugestaoDest || 'VIXA'),
+            val,
+            curr,
+            rate,
+            brl,
+            ''
+          ];
+          byAwb.set(cleanAwb, tuple);
+        }
+      }
+      return { rows: Array.from(byAwb.values()), activeSet, byAwb };
+    }
+
+    function findAwbRowUniversal(rawVal) {
+      const clean = String(rawVal || '').replace(/\D/g, '');
+      if (clean.length < 8) return null;
+      const { rows } = getAllSearchableReportRows();
+      const padded12 = clean.length < 12 ? clean.padStart(12, '0') : clean;
+      const stripped = clean.replace(/^0+/, '');
+      for (const r of rows) {
+        const rAwb = String(r[0] || '').trim();
+        if (rAwb === clean || rAwb === padded12) return r;
+        if (stripped.length >= 9 && rAwb.replace(/^0+/, '') === stripped) return r;
+      }
+      // Se tiver 9 a 11 dígitos e for sufixo único de uma AWB de 12 dígitos
+      const suffixMatches = rows.filter(r => String(r[0] || '').endsWith(clean));
+      if (suffixMatches.length === 1) return suffixMatches[0];
+      return null;
+    }
+
+    function promoteAwbIntoActiveReport(rawAwb, overrideDest = '', fallbackWt = 1.0) {
+      let clean = String(rawAwb || '').replace(/\D/g, '');
+      if (!clean) return null;
+      const existingRow = findAwbRowUniversal(clean);
+      const finalAwb = existingRow ? String(existingRow[0]) : (clean.length === 11 ? '0' + clean : (clean.length === 10 ? '00' + clean : clean));
+
+      let rowTuple = existingRow ? [...existingRow] : null;
+      if (!rowTuple) {
+        const cleanDest = String(overrideDest || 'VIXA').replace(/\s+(?:DG|PALLET)$/i, '').trim().toUpperCase() || 'VIXA';
+        rowTuple = [
+          finalAwb,
+          'AVULSO_' + finalAwb.slice(-4),
+          '',
+          'CARGA OPERACIONAL ' + cleanDest,
+          cleanDest,
+          Math.max(0.5, Number(fallbackWt || 1.0)),
+          cleanDest,
+          1.00,
+          'BRL',
+          1.0000,
+          1.00,
+          ''
+        ];
+      } else if (overrideDest) {
+        const cleanDest = String(overrideDest).replace(/\s+(?:DG|PALLET)$/i, '').trim().toUpperCase();
+        if (cleanDest) {
+          rowTuple[6] = cleanDest;
+          rowTuple._manualDest = true;
+        }
+      }
+
+      if (!Array.isArray(state.allReportRows)) state.allReportRows = [];
+      const idxAll = state.allReportRows.findIndex(r => String(r[0]) === finalAwb);
+      if (idxAll >= 0) {
+        if (overrideDest) {
+          state.allReportRows[idxAll][6] = rowTuple[6];
+          state.allReportRows[idxAll]._manualDest = true;
+        }
+      } else {
+        state.allReportRows.push([...rowTuple]);
+      }
+
+      if (!Array.isArray(state.report)) state.report = [];
+      const idxRep = state.report.findIndex(r => String(r[0]) === finalAwb);
+      if (idxRep >= 0) {
+        if (overrideDest) {
+          state.report[idxRep][6] = rowTuple[6];
+          state.report[idxRep]._manualDest = true;
+        }
+      } else {
+        state.report.push(rowTuple);
+      }
+
+      if (Array.isArray(state.reportPendencias)) {
+        for (const p of state.reportPendencias) {
+          const pClean = String(p.awb || '').replace(/\D/g, '');
+          if (p.status === 'PENDENTE' && (pClean === finalAwb || pClean.padStart(12, '0') === finalAwb)) {
+            p.status = 'RESOLVIDO';
+            p.resolucao = 'AWB ativada/movimentada manualmente na operação';
+          }
+        }
+      }
+
+      return { awb: finalAwb, row: rowTuple };
+    }
+
     function findQuickAwbSuggestions(rawVal) {
       const raw = String(rawVal || '').trim();
       const digits = raw.replace(/\D/g, '');
+      const digitsNoZero = digits.replace(/^0+/, '');
       const upper = raw.toUpperCase();
       if (!raw || (digits.length === 0 && upper.length < 2)) return [];
 
-      const rows = Array.isArray(state.report) ? state.report : [];
+      const { rows, activeSet } = getAllSearchableReportRows();
       const scored = [];
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
         const awb = String(r[0] || '').trim();
         if (!awb) continue;
+        const awbNoZero = awb.replace(/^0+/, '');
         const cons = String(r[1] || '').trim();
-        const destLoc = String(r[2] || '').trim().toUpperCase();
+        const destLoc = String(r[6] || r[2] || '').trim().toUpperCase();
         const recip = String(r[3] || '').trim().toUpperCase();
         const city = String(r[4] || '').trim().toUpperCase();
         const blockId = String(getCurrentBlockForAwb(awb, cons) || '').toUpperCase();
+        const isHeldOutside = !activeSet.has(awb);
 
         let score = 0;
         if (digits.length > 0) {
-          if (awb === digits) score = 1000;
-          else if (awb.startsWith(digits)) score = 500 + digits.length;
+          if (awb === digits || (digitsNoZero.length >= 9 && awbNoZero === digitsNoZero)) score = 1000;
+          else if (awb.startsWith(digits) || (digitsNoZero.length >= 4 && awbNoZero.startsWith(digitsNoZero))) score = 500 + digits.length;
           else if (awb.endsWith(digits)) score = 450 + digits.length;
           else if (awb.includes(digits)) score = 300 + digits.length;
           else if (cons.includes(digits)) score = 150 + digits.length;
@@ -3355,7 +3501,7 @@
           else if (cons.toUpperCase().includes(upper)) score = 140;
         }
         if (score > 0) {
-          scored.push({ row: r, awb, cons, destLoc, recip, city, blockId, score });
+          scored.push({ row: r, awb, cons, destLoc, recip, city, blockId, isHeldOutside, score });
         }
       }
       scored.sort((a, b) => b.score - a.score || a.awb.localeCompare(b.awb));
@@ -3471,7 +3617,7 @@
         return;
       }
 
-      const exactRow = clean.length === 12 ? state.report.find(r => String(r[0]) === clean) : null;
+      const exactRow = (clean.length >= 10 && clean.length <= 12) ? findAwbRowUniversal(clean) : null;
       if (!exactRow) {
         const matches = findQuickAwbSuggestions(raw);
         _quickAwbCurrentMatches = matches;
@@ -3482,8 +3628,15 @@
           closeQuickAwbDropdown();
         }
 
-        if (clean.length === 12 && matches.length === 0) {
-          card.innerHTML = `<span class="text-rose-600 dark:text-rose-400 font-bold">AWB ${clean} não encontrada no Relatório atual.</span>`;
+        if (clean.length >= 10 && matches.length === 0) {
+          card.innerHTML = `
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <span class="text-rose-600 dark:text-rose-400 font-bold">AWB ${clean} não consta na planilha Report importada.</span>
+              <button type="button" onclick="openMovimentarModal('${clean}')" class="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow-2xs">
+                ⇄ Incluir e Movimentar / Criar Bloco DG →
+              </button>
+            </div>
+          `;
           return;
         }
 
@@ -3507,7 +3660,7 @@
                 const pill = isRec ? '<span class="px-1.5 py-0.5 rounded bg-yellow-300 text-yellow-950 text-[9px] font-bold">REC</span>'
                   : isDg ? '<span class="px-1.5 py-0.5 rounded bg-red-600 text-white text-[9px] font-bold">DG</span>'
                   : isFora ? '<span class="px-1.5 py-0.5 rounded bg-neutral-400 text-neutral-950 text-[9px] font-bold">FORA</span>'
-                  : '';
+                  : (m.isHeldOutside ? '<span class="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-300 text-[9px] font-bold">RETIDA S/ CONS</span>' : '');
                 return `
                   <button type="button" onclick="selectQuickAwbSuggestion('${m.awb}')" class="text-left p-2 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-500 transition flex items-center justify-between gap-2">
                     <div class="min-w-0">
@@ -3530,18 +3683,24 @@
 
       closeQuickAwbDropdown();
       const row = exactRow;
-      const isRec = state.recusas.includes(clean);
-      const isDg = isAwbActiveDg(clean);
-      const isFora = state.foraDoVoo.includes(clean);
-      const blockId = getCurrentBlockForAwb(clean, String(row[1]));
+      const resolvedAwb = String(row[0]);
+      const isHeldOutside = !(state.report || []).some(r => String(r[0]) === resolvedAwb);
+      const isRec = state.recusas.includes(resolvedAwb);
+      const isDg = isAwbActiveDg(resolvedAwb);
+      const isFora = state.foraDoVoo.includes(resolvedAwb);
+      const blockId = getCurrentBlockForAwb(resolvedAwb, String(row[1]));
       card.innerHTML = `
         <div class="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <span class="font-mono font-extrabold text-sm text-purple-700 dark:text-purple-400">${clean}</span>
+            <span class="font-mono font-extrabold text-sm text-purple-700 dark:text-purple-400">${resolvedAwb}</span>
             <span class="ml-2 text-slate-500">CONS: <b class="font-mono text-slate-800 dark:text-slate-200">${row[1]}</b></span>
             <span class="ml-2 text-slate-500">Bloco Atual: <b class="text-indigo-600 dark:text-indigo-400">${blockId}</b></span>
+            ${isHeldOutside ? '<span class="ml-2 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold text-[10px]">Fora de CONS (Clique em DG ou Movimentar p/ ativar)</span>' : ''}
           </div>
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <button type="button" onclick="openMovimentarModal('${resolvedAwb}')" class="px-2.5 py-0.5 rounded-md bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] transition">
+              ⇄ Movimentar / Bloco DG
+            </button>
             ${isRec ? '<span class="px-2 py-0.5 rounded-md bg-yellow-300 text-yellow-950 font-bold">RECUSADA</span>' : ''}
             ${isDg ? '<span class="px-2 py-0.5 rounded-md bg-red-600 text-white font-bold">DG</span>' : ''}
             ${isFora ? '<span class="px-2 py-0.5 rounded-md bg-neutral-400 text-neutral-950 font-bold">FORA DO VOO</span>' : ''}
@@ -3549,23 +3708,33 @@
           </div>
         </div>
         <div class="mt-1.5 text-slate-600 dark:text-slate-300">
-          Destinatário: <b>${row[3]}</b> (${row[4]}) · Peso Report: <b>${row[5]} kg</b> · Valor: <b>${Number(row[10]).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</b>
+          Destinatário: <b>${row[3] || '—'}</b> (${row[4] || row[6] || '—'}) · Peso Report: <b>${row[5]} kg</b> · Destino Report: <b>${row[6] || '—'}</b> · Valor: <b>${Number(row[10] || 1).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</b>
         </div>
       `;
     }
 
     function toggleQuickAwbState(mode, awbParam) {
       const raw = awbParam || (document.getElementById('quickAwbInput') ? document.getElementById('quickAwbInput').value : '');
-      const awb = String(raw || '').replace(/\D/g, '');
-      if (awb.length !== 12) {
-        showToast('Informe uma AWB válida de 12 dígitos.');
-        return;
+      const clean = String(raw || '').replace(/\D/g, '');
+      let foundRow = clean.length >= 8 ? findAwbRowUniversal(clean) : null;
+      if (!foundRow && _quickAwbCurrentMatches.length > 0) {
+        const pick = _quickAwbCurrentMatches[_quickAwbHighlightIdx >= 0 ? _quickAwbHighlightIdx : 0];
+        if (pick && pick.row) foundRow = pick.row;
       }
-      const row = state.report.find(r => String(r[0]) === awb);
-      if (!row) {
+      if (!foundRow) {
+        if (clean.length >= 10 && clean.length <= 12 && mode === 'DG') {
+          openMovimentarModal(clean);
+          showToast('AWB não consta no Report — selecione o destino abaixo para criar o bloco DG.');
+          return;
+        }
         showToast('AWB não encontrada no Relatório atual.');
         return;
       }
+      const awb = String(foundRow[0]);
+      // Garante que a AWB esteja promovida em state.report (mesmo se a CONS dela não estava na lista de CONS)
+      promoteAwbIntoActiveReport(awb);
+      const inpEl = document.getElementById('quickAwbInput');
+      if (inpEl) inpEl.value = awb;
       if (mode === 'RECUSA') {
         if (state.foraDoVoo.includes(awb)) {
           showToast('Esta AWB já está marcada como FORA DO VOO.');
@@ -3623,10 +3792,14 @@
     }
 
     function goToAwbInReportTab(awb) {
-      const clean = String(awb || '').replace(/\D/g, '');
+      let clean = String(awb || '').replace(/\D/g, '');
       if (!clean) {
         showToast('AWB inválida para localizar no relatório.');
         return;
+      }
+      const matchedRow = findAwbRowUniversal(clean);
+      if (matchedRow) {
+        clean = String(matchedRow[0]);
       }
       if (typeof hideChronoAwbTooltip === 'function') hideChronoAwbTooltip();
       closeModal();
@@ -3677,12 +3850,14 @@
       try {
         const text = await navigator.clipboard.readText();
         const clean = String(text || '').replace(/\D/g, '').slice(0, 12);
-        if (clean.length === 12) {
-          document.getElementById('quickAwbInput').value = clean;
-          previewQuickAwb(clean);
+        if (clean.length >= 8) {
+          const matchedRow = findAwbRowUniversal(clean);
+          const finalVal = matchedRow ? String(matchedRow[0]) : clean;
+          document.getElementById('quickAwbInput').value = finalVal;
+          previewQuickAwb(finalVal);
           showToast('AWB colada da área de transferência.');
         } else {
-          showToast('O texto copiado não contém 12 dígitos.');
+          showToast('O texto copiado não contém uma AWB válida.');
         }
       } catch (e) {
         showToast('Use Ctrl+V diretamente no campo de busca.');
@@ -5604,7 +5779,7 @@
 
     function openEditReportAwbModal(awb) {
       const cleanAwb = String(awb || '').trim();
-      const r = state.report.find(x => String(x[0]) === cleanAwb);
+      const r = state.report.find(x => String(x[0]) === cleanAwb) || findAwbRowUniversal(cleanAwb);
       if (!r) {
         showToast('AWB não encontrada no Relatório.');
         return;
@@ -5768,8 +5943,10 @@
       const q = (document.getElementById('filterReportSearch')?.value || '').trim().toUpperCase();
       const statusFilter = document.getElementById('filterReportStatus')?.value || 'ALL';
 
+      // Se o usuário digitou uma busca `q`, consulta também o pool universal (allReportRows / reportPendencias) para nunca esconder uma AWB
+      const sourceReportRows = q ? getAllSearchableReportRows().rows : state.report;
       // Filtra por status, busca global e filtros de coluna
-      let filteredRows = state.report.filter(r => {
+      let filteredRows = sourceReportRows.filter(r => {
         const awb = String(r[0]);
         const isRec = state.recusas.includes(awb);
         const isDg = isAwbActiveDg(awb);
@@ -9331,7 +9508,9 @@
         const rawConsStr = String(r[colIdx.cons] ?? '').trim();
         let awb = rawAwbStr.replace(/\D/g, '');
         if (awb.length === 11) awb = '0' + awb;
-        const cons = rawConsStr.replace(/\D/g, '');
+        else if (awb.length === 10) awb = '00' + awb;
+        let cons = rawConsStr.replace(/\D/g, '');
+        if (cons.length === 11) cons = '0' + cons;
 
         // Ignora linhas de rodapé/totais sem dígitos
         if (!awb && !cons && nonEmptyCells <= 2) continue;
@@ -9374,6 +9553,13 @@
         if (consTime && awb.length === 12) {
           if (!state.awbTimes) state.awbTimes = {};
           state.awbTimes[awb] = consTime;
+        }
+
+        // Se a AWB tem 12 dígitos mas veio sem CONS de 12 dígitos (ex: DG avulso), guarda em allValidRows para poder ser pesquisada e movimentada!
+        if (awb.length === 12 && cons.length !== 12 && !seenAllAwbs.has(awb)) {
+          const effWt = hasValidWeight ? wt : 0.5;
+          const fallbackCons = cons || ('AVULSO_' + awb.slice(-4));
+          allValidRows.push([awb, fallbackCons, lacre, co, city, effWt, loc || rawLoc || 'VIXA', val, curr, rate, brl, consTime]);
         }
 
         // 1. Verifica DADOS INCOMPLETOS (AWB != 12 dígitos ou CONS != 12 dígitos)
@@ -13426,24 +13612,35 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       showToast(`COMAIL atualizado no bloco ${id}.`);
     }
 
-    function openMovimentarModal() {
+    let _movModalMatches = [];
+    function openMovimentarModal(prefillId = '') {
       selectedMovBlockId = '';
+      _movModalMatches = [];
       openModal(
-        'Movimentar Carga (Busca por IATA)',
+        'Movimentar Carga (Busca por IATA / Criar Bloco DG)',
         `<div class="space-y-3.5">
           <div>
-            <label class="block font-bold text-slate-700 dark:text-slate-200 mb-1">1. CONS ou AWB (12 dígitos)</label>
-            <input id="modalMovId" type="text" maxlength="12" placeholder="Digite a CONS ou AWB de 12 dígitos..." class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-600" />
+            <label class="block font-bold text-slate-700 dark:text-slate-200 mb-1">1. CONS ou AWB (Digite parte dos dígitos, 11 ou 12 dígitos)</label>
+            <input id="modalMovId" type="text" maxlength="32" autocomplete="off" value="${prefillId || ''}" oninput="onMovimentarIdInput(this.value)" onkeydown="handleMovimentarIdKeydown(event)" placeholder="Digite a AWB ou CONS (ex: 51823804531)..." class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-mono font-bold focus:outline-none focus:ring-2 focus:ring-purple-600" />
+            <div id="modalMovAwbPreview" class="mt-2"></div>
           </div>
+
+          <label class="flex items-center gap-2.5 p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/70 cursor-pointer select-none">
+            <input id="modalMovIsDgCheckbox" type="checkbox" class="rounded border-rose-400 text-rose-600 focus:ring-rose-500 w-4 h-4" />
+            <div class="text-xs">
+              <span class="font-extrabold text-rose-700 dark:text-rose-300">☢️ Movimentar como Carga Perigosa (Criar / Usar Bloco DG)</span>
+              <span class="block text-[10px] text-slate-500 dark:text-slate-400">Cria automaticamente o bloco separado (ex: RECA DG, VIXA DG) e marca a AWB como DG.</span>
+            </div>
+          </label>
 
           <div>
             <label class="block font-bold text-slate-700 dark:text-slate-200 mb-1">2. Buscar Bloco de Destino por IATA</label>
-            <input id="modalMovIataInput" type="text" placeholder="Digite a IATA do destino (ex: VIXA, BSBA, FORA...)" oninput="filterMovBlockSuggestions(this.value)" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-bold uppercase focus:outline-none focus:ring-2 focus:ring-purple-600" />
+            <input id="modalMovIataInput" type="text" placeholder="Digite a IATA do destino (ex: RECA, RECA DG, VIXA, BSBA...)" oninput="filterMovBlockSuggestions(this.value)" class="w-full bg-slate-50 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-xl px-3.5 py-2 text-xs font-bold uppercase focus:outline-none focus:ring-2 focus:ring-purple-600" />
             <div id="modalMovSuggestionsList" class="mt-2 space-y-1.5 max-h-40 overflow-y-auto scrollbar-thin"></div>
           </div>
 
           <div class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-2">
-            <div class="font-bold text-slate-700 dark:text-slate-200">Ou Criar Novo Bloco Extra (ex: VIXA PALLET)</div>
+            <div class="font-bold text-slate-700 dark:text-slate-200">Ou Definir / Criar Bloco (ex: RECA DG ou VIXA PALLET)</div>
             <div class="grid grid-cols-3 gap-2">
               <select id="modalMovNewOrig" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold">
                 <option value="GRU">GRU</option><option value="CGH">CGH</option><option value="VCP">VCP</option>
@@ -13451,7 +13648,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
               <select id="modalMovNewCia" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold">
                 <option value="LATAM">LATAM</option><option value="GOL">GOL</option><option value="AZUL">AZUL</option>
               </select>
-              <input id="modalMovNewDest" type="text" placeholder="Ex: VIXA PALLET" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold uppercase" />
+              <input id="modalMovNewDest" type="text" oninput="onModalMovNewDestInput(this.value)" placeholder="Ex: RECA DG" class="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-2 py-1.5 text-xs font-bold uppercase" />
             </div>
           </div>
         </div>`,
@@ -13459,63 +13656,288 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
          <button type="button" onclick="saveMovimentarCarga()" class="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white font-semibold text-xs">Confirmar Movimentação</button>`
       );
       filterMovBlockSuggestions('');
+      if (prefillId) {
+        onMovimentarIdInput(prefillId);
+      }
+    }
+
+    function onModalMovNewDestInput(val) {
+      const up = String(val || '').trim().toUpperCase();
+      if (/\bDG$/.test(up)) {
+        const chk = document.getElementById('modalMovIsDgCheckbox');
+        if (chk) chk.checked = true;
+      }
+    }
+
+    function selectMovModalAwbSuggestion(awbStr, destHint = '') {
+      const inp = document.getElementById('modalMovId');
+      if (inp) inp.value = awbStr;
+      onMovimentarIdInput(awbStr, true);
+      if (destHint && !selectedMovBlockId && !document.getElementById('modalMovIataInput')?.value) {
+        const iataInp = document.getElementById('modalMovIataInput');
+        if (iataInp) {
+          iataInp.value = destHint;
+          filterMovBlockSuggestions(destHint);
+        }
+      }
+    }
+
+    function handleMovimentarIdKeydown(e) {
+      if ((e.key === 'Tab' || e.key === 'Enter') && _movModalMatches.length > 0) {
+        const inp = document.getElementById('modalMovId');
+        const curClean = String(inp?.value || '').replace(/\D/g, '');
+        const top = _movModalMatches[0];
+        if (top && top.awb && curClean !== top.awb) {
+          e.preventDefault();
+          selectMovModalAwbSuggestion(top.awb, top.destLoc);
+        }
+      }
+    }
+
+    function onMovimentarIdInput(rawVal, suppressList = false) {
+      const box = document.getElementById('modalMovAwbPreview');
+      if (!box) return;
+      const raw = String(rawVal || '').trim();
+      const clean = raw.replace(/\D/g, '');
+      if (!raw) {
+        _movModalMatches = [];
+        box.innerHTML = '';
+        return;
+      }
+
+      // 1. Verifica se é uma CONS da operação
+      const consMatch = clean.length >= 10 ? state.cons.find(c => c.cons === clean || c.cons === clean.padStart(12, '0')) : null;
+      if (consMatch) {
+        _movModalMatches = [];
+        box.innerHTML = `
+          <div class="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-300 dark:border-emerald-700 text-xs">
+            <span class="font-extrabold text-emerald-700 dark:text-emerald-300">✓ CONS Encontrada: ${consMatch.cons}</span>
+            <span class="ml-2 text-slate-600 dark:text-slate-300">Destino: <b>${consMatch.dest}</b> · Tipo: <b>${consMatch.tipo}</b></span>
+          </div>
+        `;
+        return;
+      }
+
+      // 2. Verifica se é uma AWB no pool universal (incluindo AWBs de 10/11 dígitos como 51823804531 -> 051823804531)
+      const exactRow = clean.length >= 10 ? findAwbRowUniversal(clean) : null;
+      if (exactRow) {
+        _movModalMatches = [{ awb: String(exactRow[0]), destLoc: String(exactRow[6] || '') }];
+        const resolvedAwb = String(exactRow[0]);
+        const curBlock = getCurrentBlockForAwb(resolvedAwb, String(exactRow[1] || ''));
+        const isHeldOutside = !(state.report || []).some(r => String(r[0]) === resolvedAwb);
+        box.innerHTML = `
+          <div class="p-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-300 dark:border-purple-700 text-xs space-y-1">
+            <div class="flex items-center justify-between gap-2 flex-wrap">
+              <span class="font-mono font-extrabold text-purple-700 dark:text-purple-300">✓ AWB Encontrada: ${resolvedAwb}</span>
+              <span class="px-2 py-0.5 rounded bg-purple-600 text-white font-bold text-[10px]">Bloco: ${curBlock}</span>
+            </div>
+            <div class="text-[11px] text-slate-700 dark:text-slate-200">
+              Destinatário: <b>${exactRow[3] || '—'}</b> (${exactRow[4] || exactRow[6] || '—'}) · Peso: <b>${exactRow[5]} kg</b> · Destino Report: <b>${exactRow[6] || '—'}</b>
+            </div>
+            ${isHeldOutside ? '<div class="text-[10px] font-bold text-amber-600 dark:text-amber-400">⚡ Esta AWB estava retida sem CONS ativa e será incluída automaticamente ao confirmar!</div>' : ''}
+          </div>
+        `;
+        return;
+      }
+
+      // 3. Busca sugestões parciais
+      const matches = findQuickAwbSuggestions(raw);
+      _movModalMatches = matches;
+      if (!suppressList && matches.length > 0) {
+        box.innerHTML = `
+          <div class="p-2 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 space-y-1 max-h-32 overflow-y-auto scrollbar-thin">
+            <div class="text-[10px] font-bold text-purple-600 dark:text-purple-400 flex justify-between">
+              <span>Sugestões encontradas (${matches.length}) — clique ou aperte Tab:</span>
+            </div>
+            ${matches.slice(0, 5).map(m => `
+              <button type="button" onclick="selectMovModalAwbSuggestion('${m.awb}', '${m.destLoc}')" class="w-full text-left px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 hover:border-purple-500 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px]">
+                <span class="font-mono font-bold">${highlightAwbDigits(m.awb, clean)} <span class="text-slate-400 font-sans">· ${m.row[3] || '—'}</span></span>
+                <span class="font-bold text-purple-600 dark:text-purple-400">${m.destLoc} · ${m.row[5]} kg →</span>
+              </button>
+            `).join('')}
+          </div>
+        `;
+        return;
+      }
+
+      // 4. Caso a AWB tenha 10 a 12 dígitos e não esteja no arquivo Report (ex: AWB DG avulsa fora da planilha Report)
+      if (clean.length >= 10) {
+        box.innerHTML = `
+          <div class="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-700 text-xs space-y-2">
+            <div class="font-bold text-amber-800 dark:text-amber-300">
+              ℹ️ A AWB <span class="font-mono">${clean}</span> não consta na planilha Report, mas você pode incluí-la e movimentá-la agora mesmo:
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-[11px] font-bold text-slate-700 dark:text-slate-200">Peso da AWB (kg):</label>
+              <input id="modalMovManualPeso" type="number" step="0.1" min="0.1" value="1.0" class="w-24 bg-white dark:bg-slate-900 border border-amber-400 dark:border-amber-600 rounded-lg px-2.5 py-1 text-xs font-mono font-bold" />
+            </div>
+          </div>
+        `;
+      } else {
+        box.innerHTML = `<div class="text-[11px] text-slate-400">Nenhuma AWB encontrada para "${raw.replace(/[<>&"']/g, '')}". Continue digitando os dígitos da AWB.</div>`;
+      }
     }
 
     function filterMovBlockSuggestions(query) {
-      const q = String(query || '').trim().toUpperCase();
+      const qRaw = String(query || '').trim().toUpperCase();
+      const isQueryDg = /\bDG$/.test(qRaw);
+      const q = qRaw.replace(/\s+DG$/i, '').trim();
+      if (isQueryDg) {
+        const chk = document.getElementById('modalMovIsDgCheckbox');
+        if (chk) chk.checked = true;
+      }
       const box = document.getElementById('modalMovSuggestionsList');
       if (!box) return;
-      const normalBlocks = state.blocks.filter(b => !String(b.id).endsWith('|DG'));
+      const normalBlocks = state.blocks.filter(b => !String(b.id).endsWith('|DG') && !String(b.id).endsWith('|PALLET'));
       const matches = normalBlocks.filter(b => {
         const exp = exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase();
         return !q || exp.includes(q) || b.id.toUpperCase().includes(q) || b.dest.toUpperCase().includes(q);
       });
       box.innerHTML = matches.slice(0, 8).map(b => {
         const exp = exportDestNameForMinutaWeb(b.id, b.dest);
+        const dgBase = normalizeDgBaseId(b.id);
+        const dgBlockId = dgBase + '|DG';
+        const dgLabel = dgBase === 'BSBA' ? 'BSBA DG' : (exp.replace(/\s+(?:CAIXAS?|SACAS?)$/i, '') + ' DG');
         const isSel = selectedMovBlockId === b.id;
+        const isSelDg = selectedMovBlockId === dgBlockId;
         return `
-          <button type="button" onclick="selectMovBlockTarget('${b.id}', '${exp}')" class="w-full text-left px-3 py-2 rounded-xl border transition flex items-center justify-between ${isSel ? 'bg-purple-600 text-white border-purple-600' : 'bg-slate-50 hover:bg-purple-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-700'}">
-            <span class="font-bold">${exp} <span class="text-[10px] opacity-75">(${b.orig} · ${b.cia})</span></span>
-            <span class="text-[11px] font-mono">Vol: ${b.vol} | ${b.peso} kg</span>
-          </button>
+          <div class="flex items-center gap-1.5">
+            <button type="button" onclick="selectMovBlockTarget('${b.id}', '${exp}', false)" class="flex-1 text-left px-3 py-2 rounded-xl border transition flex items-center justify-between ${isSel ? 'bg-purple-600 text-white border-purple-600' : 'bg-slate-50 hover:bg-purple-50 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border-slate-200 dark:border-slate-700'}">
+              <span class="font-bold">${exp} <span class="text-[10px] opacity-75">(${b.orig} · ${b.cia})</span></span>
+              <span class="text-[11px] font-mono">Vol: ${b.vol} | ${b.peso} kg</span>
+            </button>
+            <button type="button" onclick="selectMovBlockTarget('${dgBlockId}', '${dgLabel}', true)" title="Mover e criar/usar Bloco ${dgLabel}" class="px-2.5 py-2 rounded-xl border text-[11px] font-extrabold transition shrink-0 ${isSelDg ? 'bg-rose-600 text-white border-rose-600' : 'bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-800'}">
+              ☢️ ${dgLabel}
+            </button>
+          </div>
         `;
       }).join('') || '<div class="text-slate-400 text-[11px] py-1">Nenhum bloco encontrado para esta IATA.</div>';
     }
 
-    function selectMovBlockTarget(blockId, label) {
+    function selectMovBlockTarget(blockId, label, isDgTarget = false) {
       selectedMovBlockId = blockId;
       const inp = document.getElementById('modalMovIataInput');
       if (inp) inp.value = label;
+      const chk = document.getElementById('modalMovIsDgCheckbox');
+      if (chk && isDgTarget) chk.checked = true;
       filterMovBlockSuggestions(label);
     }
 
     function saveMovimentarCarga() {
-      const idVal = (document.getElementById('modalMovId')?.value || '').replace(/\D/g, '');
+      const rawIdInput = (document.getElementById('modalMovId')?.value || '').trim();
+      let cleanDigits = rawIdInput.replace(/\D/g, '');
+      if (cleanDigits.length < 10 && _movModalMatches.length > 0) {
+        cleanDigits = String(_movModalMatches[0].awb || '').replace(/\D/g, '');
+      }
+      if (cleanDigits.length < 10 || cleanDigits.length > 12) {
+        showToast('Informe uma CONS ou AWB válida (10 a 12 dígitos).');
+        return;
+      }
+
       let targetBlockId = selectedMovBlockId;
       const newOrig = document.getElementById('modalMovNewOrig')?.value || 'GRU';
       const newCia = document.getElementById('modalMovNewCia')?.value || 'LATAM';
       const newDest = (document.getElementById('modalMovNewDest')?.value || '').trim().toUpperCase();
+      const iataTyped = (document.getElementById('modalMovIataInput')?.value || '').trim().toUpperCase();
+      const isDgChecked = Boolean(document.getElementById('modalMovIsDgCheckbox')?.checked);
+      const manualPesoVal = Math.max(0.5, parseFloat(document.getElementById('modalMovManualPeso')?.value || '1.0') || 1.0);
 
-      if (idVal.length !== 12) {
-        showToast('Informe uma CONS ou AWB válida de 12 dígitos.');
+      const wantsDg = isDgChecked ||
+                      String(targetBlockId).endsWith('|DG') ||
+                      /\bDG$/.test(newDest) ||
+                      /\bDG$/.test(iataTyped);
+
+      // Verifica se é uma CONS da operação
+      const consObj = state.cons.find(c => c.cons === cleanDigits || c.cons === cleanDigits.padStart(12, '0'));
+
+      // Se digitou um destino como "RECA DG" ou "RECA" em Novo Bloco Extra ou no campo IATA sem clicar na lista
+      const rawDestCandidate = newDest || (!targetBlockId ? iataTyped : '');
+      const cleanBaseDest = rawDestCandidate.replace(/\s+(?:DG|PALLET)$/i, '').trim().toUpperCase();
+
+      if (wantsDg) {
+        // Resolve o bloco base para o bloco DG (ex: RECA DG -> RECA|DG)
+        let baseBlockId = '';
+        if (targetBlockId) {
+          baseBlockId = normalizeDgBaseId(targetBlockId);
+        } else if (cleanBaseDest) {
+          baseBlockId = normalizeDgBaseId(determineBlockId(cleanBaseDest, 'CAIXAS'));
+        }
+        if (!baseBlockId) {
+          showToast('Informe o destino para o Bloco DG (ex: RECA, VIXA, BSBA...).');
+          return;
+        }
+        targetBlockId = baseBlockId + '|DG';
+
+        // Promove ou cria a AWB no relatório ativo para que o bloco DG seja criado e contabilizado
+        const promoted = promoteAwbIntoActiveReport(cleanDigits, cleanBaseDest || baseBlockId, manualPesoVal);
+        const finalAwb = promoted ? promoted.awb : cleanDigits.padStart(12, '0');
+
+        if (!state.dgs.includes(finalAwb)) state.dgs.push(finalAwb);
+        state.recusas = state.recusas.filter(x => x !== finalAwb);
+        state.foraDoVoo = state.foraDoVoo.filter(x => x !== finalAwb);
+        state.movimentacoes[finalAwb] = targetBlockId;
+
+        recalculateVolumesFromReport(false);
+
+        // Se o usuário preencheu Origem/Cia na caixa de Novo Bloco Extra (ex: GRU / LATAM / RECA DG), aplica ao bloco DG
+        if (newDest) {
+          const dgBlk = state.blocks.find(b => b.id === targetBlockId);
+          if (dgBlk) {
+            dgBlk.orig = newOrig;
+            dgBlk.cia = newCia;
+            dgBlk.manualMalhaOverride = true;
+          }
+        }
+
+        saveCatalogAndState();
+        renderAll();
+        closeModal();
+        const dgBlkFinal = state.blocks.find(b => b.id === targetBlockId);
+        showToast(`☢️ AWB ${finalAwb} movida para o bloco ${dgBlkFinal ? dgBlkFinal.dest : targetBlockId}!`);
         return;
       }
+
       if (!targetBlockId && newDest) {
-        targetBlockId = `MOV|${newOrig}|${newCia}|${newDest}`;
-        if (!state.blocks.some(b => b.id === targetBlockId)) {
-          state.blocks.push({ id: targetBlockId, orig: newOrig, cia: newCia, dest: newDest, tipo: 'CAIXAS', awbAereo: '', vol: 0, peso: 0, extra: true });
+        // Verifica se corresponde a um bloco padrão antes de criar MOV|
+        const matchedExisting = state.blocks.find(b => b.id === newDest || exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase() === newDest);
+        if (matchedExisting && !newDest.includes('PALLET')) {
+          targetBlockId = matchedExisting.id;
+        } else {
+          targetBlockId = `MOV|${newOrig}|${newCia}|${newDest}`;
+          if (!state.blocks.some(b => b.id === targetBlockId)) {
+            state.blocks.push({ id: targetBlockId, orig: newOrig, cia: newCia, dest: newDest, tipo: 'CAIXAS', awbAereo: '', vol: 0, peso: 0, extra: true });
+          }
+        }
+      } else if (!targetBlockId && cleanBaseDest) {
+        const detId = determineBlockId(cleanBaseDest, 'CAIXAS');
+        if (state.blocks.some(b => b.id === detId)) {
+          targetBlockId = detId;
         }
       }
+
       if (!targetBlockId) {
         showToast('Selecione o bloco de destino pela busca de IATA ou preencha um novo bloco extra.');
         return;
       }
-      state.movimentacoes[idVal] = targetBlockId;
+
+      if (consObj) {
+        state.movimentacoes[consObj.cons] = targetBlockId;
+        recalculateVolumesFromReport(false);
+        saveCatalogAndState();
+        renderAll();
+        closeModal();
+        showToast(`✅ CONS ${consObj.cons} movimentada para ${targetBlockId}!`);
+        return;
+      }
+
+      const promoted = promoteAwbIntoActiveReport(cleanDigits, cleanBaseDest, manualPesoVal);
+      const finalId = promoted ? promoted.awb : cleanDigits.padStart(12, '0');
+      state.movimentacoes[finalId] = targetBlockId;
       recalculateVolumesFromReport(false);
       saveCatalogAndState();
       renderAll();
       closeModal();
-      showToast(`Carga ${idVal} movimentada para ${targetBlockId}!`);
+      showToast(`✅ AWB ${finalId} movimentada para ${targetBlockId}!`);
     }
 
     function openEditBlockModal(blockId) { return openEditBlockWeightModal(blockId); }
