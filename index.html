@@ -18,6 +18,7 @@
   <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script>
@@ -1231,9 +1232,55 @@
       }
     }
 
+    window._formalPdfMemCache = window._formalPdfMemCache || {};
+
+    function saveFormalPdfLocalCache(opId, pdfB64) {
+      if (!opId || !pdfB64) return;
+      window._formalPdfMemCache[opId] = pdfB64;
+      try {
+        sessionStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64);
+      } catch (e) {}
+      try {
+        localStorage.setItem('fedex_formal_pdf_b64_' + opId, pdfB64);
+      } catch (e) {}
+    }
+
+    function loadFormalPdfLocalCache(opId) {
+      if (!opId) return '';
+      if (window._formalPdfMemCache && window._formalPdfMemCache[opId]) {
+        return window._formalPdfMemCache[opId];
+      }
+      try {
+        const s = sessionStorage.getItem('fedex_formal_pdf_b64_' + opId) || localStorage.getItem('fedex_formal_pdf_b64_' + opId) || '';
+        if (s) window._formalPdfMemCache[opId] = s;
+        return s;
+      } catch (e) {
+        return '';
+      }
+    }
+
+    function buildSlimSnapshotForCatalog(st) {
+      const clone = JSON.parse(JSON.stringify(st));
+      if (clone && clone.formalDoc && clone.formalDoc.pdfB64) {
+        if (clone.opId) {
+          saveFormalPdfLocalCache(clone.opId, clone.formalDoc.pdfB64);
+        }
+        // Se o PDF em Base64 tiver mais de 250 KB, não duplica dentro do snapshot do catálogo para não estourar localStorage/Supabase
+        if (String(clone.formalDoc.pdfB64).length > 250000) {
+          clone.formalDoc.pdfB64 = '';
+          clone.formalDoc.storedInLocalCache = true;
+        }
+      }
+      return clone;
+    }
+
     function saveCatalogAndState() {
       pruneExpiredHistory();
       if (state.opId) {
+        if (state.formalDoc && state.formalDoc.pdfB64) {
+          saveFormalPdfLocalCache(state.opId, state.formalDoc.pdfB64);
+        }
+        const slimSnap = buildSlimSnapshotForCatalog(state);
         const entry = {
           id: state.opId,
           name: state.opName || `Operação ${formatDateBr(state.flightDate)}`,
@@ -1241,7 +1288,7 @@
           status: state.status || 'ABERTA',
           createdAt: state.createdAt || new Date().toISOString(),
           finalizedAt: state.finalizedAt || null,
-          snapshot: JSON.parse(JSON.stringify(state))
+          snapshot: slimSnap
         };
         if (entry.status === 'FINALIZADA' && isOperationSnapshotEmpty(entry)) {
           operationsCatalog = operationsCatalog.filter(o => o.id !== entry.id);
@@ -1256,7 +1303,7 @@
       try {
         localStorage.setItem('fedex_sistema_aereo_ops_catalog_v3', JSON.stringify(operationsCatalog));
         if (state.opId) {
-          localStorage.setItem('fedex_sistema_aereo_web_v3', JSON.stringify(state));
+          localStorage.setItem('fedex_sistema_aereo_web_v3', JSON.stringify(buildSlimSnapshotForCatalog(state)));
         }
       } catch (e) {}
     }
@@ -1322,7 +1369,7 @@
 
     async function syncOperationsWithSupabase() {
       try {
-        const res = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,status,operacao,dados&id=like.__SYS_AEREO_OP__*`, {
+        const res = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,status,operacao,dados&id=gte.__SYS_AEREO_OP__&id=lt.__SYS_AEREO_OP_z`, {
           headers: {
             apikey: MINUTAS_SUPABASE_KEY,
             Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
@@ -2102,6 +2149,10 @@
       if (!state.pallets) state.pallets = {};
       if (!state.ctes) state.ctes = {};
       if (!state.preAlertaConcluido) state.preAlertaConcluido = {};
+      if (state.formalDoc && state.formalDoc.attached && !state.formalDoc.pdfB64) {
+        const cachedPdf = loadFormalPdfLocalCache(state.opId);
+        if (cachedPdf) state.formalDoc.pdfB64 = cachedPdf;
+      }
 
       if (state.status !== 'FINALIZADA') {
         applyMalhaRulesToBlocksArray(state.blocks, state.flightDate);
@@ -7135,32 +7186,43 @@
     async function fetchActiveMinutasOpNames() {
       const activeNames = new Set();
       try {
-        const resOps = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/operacoes?select=id,nome,status,finalizado_em&order=criado_em.desc&limit=25`, {
-          headers: {
-            apikey: MINUTAS_SUPABASE_KEY,
-            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
-            'Content-Type': 'application/json'
+        // 1) Verifica cache local compartilhado no mesmo navegador (0ms)
+        const rawLocalOps = localStorage.getItem('cache_ops_ativas');
+        if (rawLocalOps) {
+          const parsedLocal = JSON.parse(rawLocalOps);
+          if (Array.isArray(parsedLocal)) {
+            parsedLocal.forEach(o => {
+              if (o && (o.nome || o.operacao) && isOperacaoAtiva(o)) {
+                activeNames.add(String(o.nome || o.operacao).trim());
+              }
+            });
           }
-        });
-        if (resOps.ok) {
+        }
+      } catch (e) {}
+
+      try {
+        const hdrs = {
+          apikey: MINUTAS_SUPABASE_KEY,
+          Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        };
+        // 2) Consulta em paralelo a tabela 'operacoes' e os registros '__SYS_OP__' usando range scan indexado (id=gte/lt) sem puxar o blob 'dados'
+        const [resOps, resSys] = await Promise.all([
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/operacoes?select=id,nome,status,finalizado_em&order=criado_em.desc&limit=25`, { headers: hdrs }).catch(() => null),
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,operacao,status,finalizado_em:dados->>finalizado_em&id=gte.__SYS_OP__&id=lt.__SYS_OP_z`, { headers: hdrs }).catch(() => null)
+        ]);
+
+        if (resOps && resOps.ok) {
           const opsData = await resOps.json();
-          if (Array.isArray(opsData) && opsData.length > 0) {
+          if (Array.isArray(opsData)) {
             for (const o of opsData) {
               if (isOperacaoAtiva(o) && (o.nome || o.operacao)) {
                 activeNames.add(String(o.nome || o.operacao).trim());
               }
             }
-            return activeNames;
           }
         }
-        const resSys = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,operacao,status,finalizado_em:dados->>finalizado_em&id=like.__SYS_OP__*`, {
-          headers: {
-            apikey: MINUTAS_SUPABASE_KEY,
-            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        if (resSys.ok) {
+        if (resSys && resSys.ok) {
           const sysRows = await resSys.json();
           if (Array.isArray(sysRows)) {
             for (const r of sysRows) {
@@ -7816,63 +7878,129 @@
     // =========================================================================
     // 2. GESTÃO DE MINUTAS: BUSCAR APENAS OPERAÇÕES ATIVAS REAIS DO GESTÃO DE MINUTAS
     // =========================================================================
+    async function createAndSendMinutasOperationDirectly(opNomeTarget) {
+      const nomeOp = String(opNomeTarget || state.opName || `Operação ${formatDateBr(state.flightDate)}`).trim();
+      const idOp = '__SYS_OP__' + nomeOp.replace(/[^a-zA-Z0-9]/g, '_');
+      const agora = Date.now();
+      const operadorNome = ctrlUsuarioLogado || 'EQUIPE';
+      const hdrs = {
+        apikey: MINUTAS_SUPABASE_KEY,
+        Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal'
+      };
+      try {
+        await Promise.all([
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/operacoes?on_conflict=id`, {
+            method: 'POST',
+            headers: hdrs,
+            body: JSON.stringify([{ id: idOp, nome: nomeOp, criado_por: operadorNome, status: 'ATIVA', criado_em: agora, finalizado_em: null }])
+          }).catch(() => null),
+          fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?on_conflict=id`, {
+            method: 'POST',
+            headers: hdrs,
+            body: JSON.stringify([{ id: idOp, destino: 'SYS_OP', cia: 'SYS', operador: operadorNome, status: 'ATIVA', operacao: nomeOp, dados: { criado_em: agora, criado_por: operadorNome } }])
+          }).catch(() => null)
+        ]);
+      } catch (e) {}
+      await sendMinutasAndZipToOperation(idOp, nomeOp, true);
+    }
+
     async function openMinutasOperationsModal() {
       if (isFormalLockActive()) {
         openFormalLockModal(() => openMinutasOperationsModal());
         return;
       }
       showToast('Buscando operações ativas no Gestão de Minutas...');
-      let activeMinutasOps = [];
+      const opsByName = new Map();
 
+      // 1) Leitura instantânea do cache local se o Gestão de Minutas estiver no mesmo navegador
       try {
-        // 1) Tenta tabela 'operacoes' do projeto Gestão de Minutas
-        const resOps = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/operacoes?select=*&order=criado_em.desc&limit=20`, {
-          headers: {
-            apikey: MINUTAS_SUPABASE_KEY,
-            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
-            'Content-Type': 'application/json'
-          }
-        });
-        if (resOps.ok) {
-          const opsData = await resOps.json();
-          if (Array.isArray(opsData) && opsData.length > 0) {
-            activeMinutasOps = opsData.filter(isOperacaoAtiva).map(o => ({
-              id: o.id,
-              nome: o.nome || o.operacao || 'Operação',
-              criado_por: o.criado_por || 'EQUIPE'
-            }));
-          }
-        }
-
-        // 2) Se vazio ou fallback, consulta os registros __SYS_OP__ na tabela 'minutas' do Gestão de Minutas
-        if (activeMinutasOps.length === 0) {
-          const resSys = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,operacao,operador,status,dados&id=like.__SYS_OP__*`, {
-            headers: {
-              apikey: MINUTAS_SUPABASE_KEY,
-              Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
-              'Content-Type': 'application/json'
-            }
-          });
-          if (resSys.ok) {
-            const sysRows = await resSys.json();
-            if (Array.isArray(sysRows)) {
-              activeMinutasOps = sysRows.filter(isOperacaoAtiva).map(r => ({
-                id: r.id,
-                nome: r.operacao || 'Operação',
-                criado_por: r.operador || 'EQUIPE'
-              }));
-            }
+        const rawLocal = localStorage.getItem('cache_ops_ativas');
+        if (rawLocal) {
+          const parsed = JSON.parse(rawLocal);
+          if (Array.isArray(parsed)) {
+            parsed.filter(isOperacaoAtiva).forEach(o => {
+              const nm = String(o.nome || o.operacao || '').trim();
+              if (nm) {
+                opsByName.set(nm, {
+                  id: o.id || ('__SYS_OP__' + nm.replace(/[^a-zA-Z0-9]/g, '_')),
+                  nome: nm,
+                  criado_por: o.criado_por || o.operador || 'EQUIPE'
+                });
+              }
+            });
           }
         }
       } catch (e) {}
 
+      // 2) Consulta rápida em paralelo usando índice primário (id=gte/lt sem puxar a coluna 'dados' inteira!)
+      try {
+        const hdrs = {
+          apikey: MINUTAS_SUPABASE_KEY,
+          Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+          'Content-Type': 'application/json'
+        };
+        const fetchWithTimeout = (url, ms = 4500) => {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), ms);
+          return fetch(url, { headers: hdrs, signal: ctrl.signal }).finally(() => clearTimeout(t)).catch(() => null);
+        };
+
+        const [resOps, resSys] = await Promise.all([
+          fetchWithTimeout(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/operacoes?select=id,nome,criado_por,status,finalizado_em&order=criado_em.desc&limit=20`),
+          fetchWithTimeout(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?select=id,operacao,operador,status,finalizado_em:dados->>finalizado_em&id=gte.__SYS_OP__&id=lt.__SYS_OP_z`)
+        ]);
+
+        if (resOps && resOps.ok) {
+          const opsData = await resOps.json();
+          if (Array.isArray(opsData)) {
+            // Se o banco retornou a lista oficial, limpa o cache local para refletir exatamente o banco
+            opsByName.clear();
+            opsData.filter(isOperacaoAtiva).forEach(o => {
+              const nm = String(o.nome || o.operacao || '').trim();
+              if (nm) {
+                opsByName.set(nm, {
+                  id: o.id,
+                  nome: nm,
+                  criado_por: o.criado_por || 'EQUIPE'
+                });
+              }
+            });
+          }
+        }
+
+        if (resSys && resSys.ok) {
+          const sysRows = await resSys.json();
+          if (Array.isArray(sysRows)) {
+            sysRows.filter(isOperacaoAtiva).forEach(r => {
+              const nm = String(r.operacao || '').trim();
+              if (nm && !opsByName.has(nm)) {
+                opsByName.set(nm, {
+                  id: r.id,
+                  nome: nm,
+                  criado_por: r.operador || 'EQUIPE'
+                });
+              }
+            });
+          }
+        }
+      } catch (e) {}
+
+      const activeMinutasOps = Array.from(opsByName.values());
+      const defaultOpName = state.opName || `Operação ${formatDateBr(state.flightDate)}`;
+      const safeDefaultOpName = defaultOpName.replace(/'/g, "\'");
+
       if (activeMinutasOps.length === 0) {
-        showToast('Nenhuma operação ativa em andamento encontrada no Gestão de Minutas.');
+        showToast('Nenhuma operação aberta encontrada no Gestão de Minutas.');
         openModal(
           'Operações Ativas — Gestão de Minutas',
-          `<div class="p-6 text-center space-y-2">
-            <div class="text-sm font-bold text-slate-700 dark:text-slate-200">Nenhuma operação ativa no Gestão de Minutas</div>
-            <p class="text-xs text-slate-400">Abra o sistema <strong>Gestão de Minutas</strong> e crie uma operação ativa para poder enviar as minutas diretamente para lá.</p>
+          `<div class="p-5 text-center space-y-3">
+            <div class="text-sm font-bold text-slate-700 dark:text-slate-200">Nenhuma operação ativa encontrada no Gestão de Minutas</div>
+            <p class="text-xs text-slate-400">Você pode criar automaticamente a <strong>${defaultOpName}</strong> lá no Gestão de Minutas e já enviar os blocos e o pacote ZIP agora mesmo:</p>
+            <button type="button" onclick="createAndSendMinutasOperationDirectly('${safeDefaultOpName}')" class="btn-web w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-sm">
+              ⚡ Criar "${defaultOpName}" no Gestão de Minutas e Enviar Agora →
+            </button>
           </div>`,
           `<button type="button" onclick="closeModal()" class="px-4 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-semibold text-xs">Fechar</button>`
         );
@@ -8031,24 +8159,27 @@
       try {
         localStorage.setItem('fedex_minutas_remessa_ativa', JSON.stringify(payload));
       } catch (e) {}
+
+      // Se houver PDF Formal, salva também na chave de sessão compartilhada do mesmo navegador para o Gestão de Minutas ler na hora
       try {
-        if (localBroadcast) localBroadcast.postMessage(payload);
-      } catch (e) {}
-      try {
-        if (minutasChannel) {
-          minutasChannel.send({ type: 'broadcast', event: 'MINUTAS_EXPORTADAS', payload });
+        const formalRow = enrichedRows.find(r => r.DOC_FORMAL_PDF_B64);
+        if (formalRow && formalRow.DOC_FORMAL_PDF_B64) {
+          const scopeKey = `${String(targetOpNome).trim().toUpperCase()}::minuta_pdf_formal_FORA FORMAL`;
+          sessionStorage.setItem(scopeKey, formalRow.DOC_FORMAL_PDF_B64);
         }
       } catch (e) {}
 
-      try {
-        const res = await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?on_conflict=id`, {
+      const hdrs = {
+        apikey: MINUTAS_SUPABASE_KEY,
+        Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        Prefer: 'resolution=merge-duplicates,return=minimal'
+      };
+
+      const postSyncRows = async (rowsToPost) => {
+        return await fetch(`https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?on_conflict=id`, {
           method: 'POST',
-          headers: {
-            apikey: MINUTAS_SUPABASE_KEY,
-            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates,return=minimal'
-          },
+          headers: hdrs,
           body: JSON.stringify([{
             id: syncRowId,
             destino: 'SYS_AEREO_SYNC',
@@ -8061,12 +8192,49 @@
               enviado_em: Date.now(),
               flight_date: state.flightDate,
               source_op_id: state.opId,
-              rows: enrichedRows,
+              rows: rowsToPost,
               zip_filename: zipBundle.zipFilename
             }
           }])
         });
-        if (!res.ok) throw new Error('Falha ao gravar pacote no banco do Gestão de Minutas.');
+      };
+
+      try {
+        // Se algum DOC_FORMAL_PDF_B64 ainda for muito grande (> 1.5 MB), envia primeiro sem o PDF pesado ou comprime, evitando timeout do Supabase
+        const totalJsonLen = JSON.stringify(enrichedRows).length;
+        let res = null;
+        if (totalJsonLen <= 2200000) {
+          res = await postSyncRows(enrichedRows);
+        }
+        // Fallback automático: se o banco rejeitar ou der timeout por tamanho do PDF Formal, envia o pacote enxuto (com FORMAL_META e Excel) para nunca falhar!
+        if (!res || !res.ok) {
+          const slimRows = enrichedRows.map(r => ({
+            ...r,
+            DOC_FORMAL_PDF_B64: (r.DOC_FORMAL_PDF_B64 && r.DOC_FORMAL_PDF_B64.length <= 600000) ? r.DOC_FORMAL_PDF_B64 : ''
+          }));
+          res = await postSyncRows(slimRows);
+        }
+        if (!res || !res.ok) {
+          // Último nível de segurança: envia apenas os dados estruturados dos blocos
+          const ultraSlimRows = enrichedRows.map(r => ({
+            ...r,
+            DOC_FORMAL_PDF_B64: '',
+            DOC_EXCEL_B64: ''
+          }));
+          res = await postSyncRows(ultraSlimRows);
+        }
+        if (!res || !res.ok) throw new Error('Falha ao gravar pacote no banco do Gestão de Minutas.');
+
+        // Dispara o aviso em tempo real DEPOIS que o registro já está gravado como PENDENTE no Supabase!
+        try {
+          if (localBroadcast) localBroadcast.postMessage(payload);
+        } catch (e) {}
+        try {
+          if (minutasChannel) {
+            minutasChannel.send({ type: 'broadcast', event: 'MINUTAS_EXPORTADAS', payload });
+          }
+        } catch (e) {}
+
         showToast(`🚀 ${enrichedRows.length} blocos + ${zipBundle.filesCount} planilhas LATAM (.zip integrado) enviados para "${targetOpNome}"!`);
       } catch (e) {
         showToast('Aviso ao gravar no banco de minutas: ' + e.message);
@@ -8088,6 +8256,7 @@
 
         const isFormalBlock = String(b.id) === 'FORTALEZA_FORMAL' || exportDestNameForMinutaWeb(b.id, b.dest).toUpperCase().includes('FORMAL');
         const formalDocInfo = (isFormalBlock && state.formalDoc && state.formalDoc.attached) ? state.formalDoc : null;
+        const resolvedFormalPdfB64 = formalDocInfo ? (formalDocInfo.pdfB64 || loadFormalPdfLocalCache(state.opId) || '') : '';
         out.push({
           BLOCO_ID: b.id,
           ORIGEM: b.orig,
@@ -8098,7 +8267,7 @@
           PESO: peso,
           VALOR_TOTAL: valTotal,
           AWB_AEREO: b.awbAereo || '',
-          DOC_FORMAL_PDF_B64: formalDocInfo ? (formalDocInfo.pdfB64 || '') : '',
+          DOC_FORMAL_PDF_B64: resolvedFormalPdfB64,
           DOC_FORMAL_PDF_NOME: formalDocInfo ? (formalDocInfo.fileName || 'FORMAL.pdf') : '',
           FORMAL_META: formalDocInfo ? {
             nfNumero: formalDocInfo.nfNumero || '',
@@ -14310,7 +14479,8 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       const fb = getFormalBlockObj();
       if (!fb || Number(fb.vol || 0) <= 0) return false;
       const fDoc = state.formalDoc;
-      if (fDoc && fDoc.attached && Number(fDoc.valorTotalNf || 0) > 0 && fDoc.pdfB64) {
+      const hasPdf = Boolean(fDoc && (fDoc.pdfB64 || fDoc.storedInLocalCache || loadFormalPdfLocalCache(state.opId)));
+      if (fDoc && fDoc.attached && Number(fDoc.valorTotalNf || 0) > 0 && hasPdf) {
         return false;
       }
       return true;
@@ -14318,7 +14488,8 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
     function buildFormalBlockControlBarHtml(b) {
       const fDoc = state.formalDoc || {};
-      const isAttached = Boolean(fDoc.attached && fDoc.pdfB64 && Number(fDoc.valorTotalNf || 0) > 0);
+      const hasPdf = Boolean(fDoc.pdfB64 || fDoc.storedInLocalCache || loadFormalPdfLocalCache(state.opId));
+      const isAttached = Boolean(fDoc.attached && hasPdf && Number(fDoc.valorTotalNf || 0) > 0);
       if (isAttached) {
         return `
           <div class="p-2.5 rounded-xl bg-emerald-950/85 border border-emerald-500/70 text-emerald-100 space-y-1.5">
@@ -14398,40 +14569,76 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
     async function extractTextAndOcrFromFormalPdf(arrayBuffer) {
       if (!window.pdfjsLib) throw new Error('Biblioteca PDF.js não carregada.');
+      const origByteLen = arrayBuffer.byteLength || 0;
       const copyBuf = arrayBuffer.slice(0);
       const pdf = await window.pdfjsLib.getDocument({ data: copyBuf }).promise;
       let combinedText = '';
       const pagePreviews = [];
+      const allCompressedPages = [];
 
-      const maxPagesToScan = Math.min(pdf.numPages, 3);
-      for (let p = 1; p <= maxPagesToScan; p++) {
+      const needCompression = origByteLen > 450 * 1024 && window.jspdf && window.jspdf.jsPDF;
+      const totalPagesToRender = needCompression ? Math.min(pdf.numPages, 8) : Math.min(pdf.numPages, 3);
+
+      for (let p = 1; p <= totalPagesToRender; p++) {
         const page = await pdf.getPage(p);
-        const textContent = await page.getTextContent();
-        const layerStr = textContent.items.map(it => it.str).join(' ').trim();
-        combinedText += '\n' + layerStr;
+        if (p <= 3) {
+          const textContent = await page.getTextContent();
+          const layerStr = textContent.items.map(it => it.str).join(' ').trim();
+          combinedText += '\n' + layerStr;
 
-        const viewport = page.getViewport({ scale: 2.0 });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-        pagePreviews.push({ pageNum: p, dataUrl });
+          const viewport = page.getViewport({ scale: 1.55 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+          pagePreviews.push({ pageNum: p, dataUrl });
+          allCompressedPages.push({ dataUrl, w: viewport.width, h: viewport.height });
 
-        if (layerStr.length < 40 && typeof Tesseract !== 'undefined' && p <= 2) {
-          showToast(`🤖 IA lendo página ${p}/${maxPagesToScan} do PDF escaneado (OCR)...`);
-          try {
-            const ocrRes = await Tesseract.recognize(dataUrl, 'por+eng');
-            if (ocrRes && ocrRes.data && ocrRes.data.text) {
-              combinedText += '\n' + ocrRes.data.text;
+          if (layerStr.length < 40 && typeof Tesseract !== 'undefined' && p <= 2) {
+            showToast(`🤖 IA lendo página ${p}/${ Math.min(pdf.numPages, 3) } do PDF escaneado (OCR)...`);
+            try {
+              const ocrRes = await Tesseract.recognize(dataUrl, 'por+eng');
+              if (ocrRes && ocrRes.data && ocrRes.data.text) {
+                combinedText += '\n' + ocrRes.data.text;
+              }
+            } catch (e) {
+              console.warn('Aviso OCR Formal p.' + p, e);
             }
-          } catch (e) {
-            console.warn('Aviso OCR Formal p.' + p, e);
           }
+        } else {
+          const viewport = page.getViewport({ scale: 1.4 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const dataUrl = canvas.toDataURL('image/jpeg', 0.68);
+          allCompressedPages.push({ dataUrl, w: viewport.width, h: viewport.height });
         }
       }
-      return { combinedText, numPages: pdf.numPages, pagePreviews };
+
+      let compressedPdfB64 = null;
+      if (needCompression && allCompressedPages.length > 0) {
+        try {
+          const { jsPDF } = window.jspdf;
+          const first = allCompressedPages[0];
+          const firstOrient = first.w > first.h ? 'l' : 'p';
+          const doc = new jsPDF({ orientation: firstOrient, unit: 'px', format: [first.w, first.h], compress: true });
+          allCompressedPages.forEach((pg, idx) => {
+            if (idx > 0) {
+              doc.addPage([pg.w, pg.h], pg.w > pg.h ? 'l' : 'p');
+            }
+            doc.addImage(pg.dataUrl, 'JPEG', 0, 0, pg.w, pg.h, undefined, 'FAST');
+          });
+          compressedPdfB64 = doc.output('datauristring');
+        } catch (e) {
+          console.warn('Aviso ao comprimir PDF Formal:', e);
+        }
+      }
+
+      return { combinedText, numPages: pdf.numPages, pagePreviews, compressedPdfB64 };
     }
 
     function parseFormalMetadataFromText(rawText) {
@@ -14478,8 +14685,9 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       showToast('🤖 Lendo documentação do FOR FORMAL com IA...');
       try {
         const ab = await file.arrayBuffer();
-        const pdfB64 = 'data:application/pdf;base64,' + arrayBufferToBase64(ab);
-        const { combinedText, numPages, pagePreviews } = await extractTextAndOcrFromFormalPdf(ab);
+        const rawPdfB64 = 'data:application/pdf;base64,' + arrayBufferToBase64(ab);
+        const { combinedText, numPages, pagePreviews, compressedPdfB64 } = await extractTextAndOcrFromFormalPdf(ab);
+        const pdfB64 = (compressedPdfB64 && compressedPdfB64.length < rawPdfB64.length) ? compressedPdfB64 : rawPdfB64;
         const parsed = parseFormalMetadataFromText(combinedText);
 
         const defaultVal = parsed.valorTotalNf > 0 ? parsed.valorTotalNf : 24785.22;
@@ -14647,10 +14855,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
     function openFormalPdfPreviewModal() {
       const fDoc = state.formalDoc;
-      if (!fDoc || !fDoc.pdfB64) {
+      const pdfUrl = fDoc ? (fDoc.pdfB64 || loadFormalPdfLocalCache(state.opId) || '') : '';
+      if (!fDoc || !pdfUrl) {
         showToast('Nenhum PDF Formal anexado ainda.');
         return;
       }
+      fDoc.pdfB64 = pdfUrl;
       openModal(
         `📄 Documentação Formal Anexada — ${fDoc.fileName || 'FORMAL.pdf'}`,
         `<div class="space-y-3 text-xs">
