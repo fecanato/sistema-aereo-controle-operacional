@@ -7136,6 +7136,14 @@
         localBroadcast = new BroadcastChannel('fedex_aereo_minutas_channel');
         localBroadcast.onmessage = (ev) => handleIncomingMinutasEvent(ev.data);
       } catch (e) {}
+      try {
+        const pesosBc = new BroadcastChannel('fedex_aereo_pesos_channel');
+        pesosBc.onmessage = (ev) => {
+          if (ev.data && ev.data.type === 'CORRECOES_LIMPAS_NO_PESOS') {
+            revertAllPesosCorrectionsFromPesosClear();
+          }
+        };
+      } catch (e) {}
 
       if (!window.supabase) return;
       try {
@@ -7159,6 +7167,9 @@
           .on('broadcast', { event: 'MALHA_ATUALIZADA' }, (payload) => {
             handleIncomingMinutasEvent(payload.payload);
           })
+          .on('broadcast', { event: 'CORRECOES_LIMPAS_NO_PESOS' }, (payload) => {
+            handleIncomingMinutasEvent(payload.payload);
+          })
           .subscribe((status) => {
             const stEl = document.getElementById('supabaseStatusText');
             if (stEl && status === 'SUBSCRIBED') {
@@ -7180,6 +7191,10 @@
       if (data.type === 'MALHA_ATUALIZADA' && Array.isArray(data.malha)) {
         saveMalhaToLocalCache(data.malha);
         applyMalhaRulesToOperationBlocks(false);
+        return;
+      }
+      if (data.type === 'CORRECOES_LIMPAS_NO_PESOS') {
+        revertAllPesosCorrectionsFromPesosClear();
         return;
       }
       const dtBr = formatDateBr(state.flightDate);
@@ -7893,6 +7908,10 @@
           }
         }
 
+        // Quando reimporta os pesos brutos do Gestão de Pesos, limpa conciliações antigas para evitar duplicar ajustes ou re-sincroniza se necessário
+        state.crossReconciliations = { ignoredIds: [], approved: [] };
+        state.scaleCorrectionsApproved = [];
+        state.ignoredScaleAnomalies = [];
         saveCatalogAndState();
         renderAll();
         switchTab('pesos');
@@ -11798,6 +11817,18 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       return suggestions;
     }
 
+    function mapBlockIdToGestaoPesosDest(blockId, fallbackDest = '') {
+      const cleanId = String(blockId || '').replace(/\|(?:DG|PALLET)$/i, '').trim().toUpperCase();
+      if (cleanId === 'BRASILIA_SACA') return 'BSBA SACAS';
+      if (cleanId === 'BRASILIA_CAIXAS') return 'BSBA CAIXAS';
+      if (cleanId === 'FORTALEZA_FORMAL') return 'FORA FORMAL';
+      if (cleanId === 'FORTALEZA_NORMAL') return 'FORA';
+      if (cleanId === 'JOAO_PESSOA_VIA_RECIFE') return 'JPAA';
+      if (cleanId === 'ITN_IOS_TXT') return 'ITNA';
+      if (cleanId) return cleanId;
+      return String(fallbackDest || '').trim().toUpperCase();
+    }
+
     function ensureCrossReconciliationsState() {
       if (!state.crossReconciliations || typeof state.crossReconciliations !== 'object') {
         state.crossReconciliations = { ignoredIds: [], approved: [] };
@@ -11808,6 +11839,170 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       if (!Array.isArray(state.crossReconciliations.approved)) {
         state.crossReconciliations.approved = [];
       }
+      if (!Array.isArray(state.scaleCorrectionsApproved)) {
+        state.scaleCorrectionsApproved = [];
+      }
+    }
+
+    async function syncPesosCorrectionsToBridge(clearedFlag = false) {
+      ensureCrossReconciliationsState();
+      const corrections = [];
+
+      for (const c of (state.crossReconciliations.approved || [])) {
+        const bFrom = (state.blocks || []).find(b => b.id === c.fromBlockId);
+        const bTo = (state.blocks || []).find(b => b.id === c.toBlockId);
+        const fromDest = c.fromPesosDest || mapBlockIdToGestaoPesosDest(c.fromBlockId, bFrom?.dest || c.fromDestLabel);
+        const toDest = c.toPesosDest || mapBlockIdToGestaoPesosDest(c.toBlockId, bTo?.dest || c.toDestLabel);
+        const sourceRecordIds = (c.removedOrReducedLogs || [])
+          .map(x => (x.snapshot && x.snapshot.id) ? x.snapshot.id : (x.logId || ''))
+          .filter(Boolean);
+        corrections.push({
+          id: c.id,
+          type: 'TRANSFER',
+          fromBlockId: c.fromBlockId,
+          toBlockId: c.toBlockId,
+          fromDest,
+          toDest,
+          vol: Number(c.vol || 1),
+          kg: Number(c.kg || 0),
+          fromTime: c.fromTime || '',
+          toTime: c.toTime || c.fromTime || '',
+          cat: toDest.includes('SACA') ? 'SACA' : 'CAIXA',
+          approvedAt: c.approvedAt || '',
+          sourceRecordIds
+        });
+      }
+
+      for (const sc of (state.scaleCorrectionsApproved || [])) {
+        corrections.push({ ...sc });
+      }
+
+      const payload = {
+        operacao_id: state.pesosGestaoOpId || '',
+        ctrl_op_id: state.opId || '',
+        flight_date: state.flightDate || '',
+        op_name: state.opName || '',
+        cleared: Boolean(clearedFlag),
+        updated_at: Date.now(),
+        corrections
+      };
+
+      try {
+        localStorage.setItem('peso_correcoes_ia_latest', JSON.stringify(payload));
+        if (state.pesosGestaoOpId) {
+          localStorage.setItem('peso_correcoes_ia_' + state.pesosGestaoOpId, JSON.stringify(payload));
+        }
+        if (state.flightDate) {
+          localStorage.setItem('peso_correcoes_ia_date_' + state.flightDate, JSON.stringify(payload));
+        }
+      } catch (e) {}
+
+      try {
+        const bcPesos = new BroadcastChannel('fedex_aereo_pesos_channel');
+        bcPesos.postMessage({ type: 'PESOS_CORRECOES_IA', payload });
+        bcPesos.close();
+      } catch (e) {}
+
+      try {
+        if (localBroadcast) {
+          localBroadcast.postMessage({ type: 'PESOS_CORRECOES_IA', payload });
+        }
+      } catch (e) {}
+
+      try {
+        if (minutasChannel) {
+          minutasChannel.send({ type: 'broadcast', event: 'PESOS_CORRECOES_IA', payload });
+        }
+      } catch (e) {}
+
+      try {
+        const rowsToUpsert = [
+          {
+            id: '__SYS_PESOS_CORRECOES__LATEST',
+            destino: 'SYS_PESOS_CORR',
+            cia: 'SYS',
+            operador: ctrlUsuarioLogado || 'CTRL_OP',
+            status: 'ATIVA',
+            operacao: state.pesosGestaoOpId || state.flightDate || 'LATEST',
+            dados: payload
+          }
+        ];
+        if (state.pesosGestaoOpId) {
+          rowsToUpsert.push({
+            id: '__SYS_PESOS_CORRECOES__' + state.pesosGestaoOpId,
+            destino: 'SYS_PESOS_CORR',
+            cia: 'SYS',
+            operador: ctrlUsuarioLogado || 'CTRL_OP',
+            status: 'ATIVA',
+            operacao: state.pesosGestaoOpId,
+            dados: payload
+          });
+        }
+        if (state.flightDate) {
+          rowsToUpsert.push({
+            id: '__SYS_PESOS_CORRECOES_DATE__' + state.flightDate,
+            destino: 'SYS_PESOS_CORR',
+            cia: 'SYS',
+            operador: ctrlUsuarioLogado || 'CTRL_OP',
+            status: 'ATIVA',
+            operacao: state.flightDate,
+            dados: payload
+          });
+        }
+        await fetch('https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas?on_conflict=id', {
+          method: 'POST',
+          headers: {
+            apikey: MINUTAS_SUPABASE_KEY,
+            Authorization: `Bearer ${MINUTAS_SUPABASE_KEY}`,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates,return=minimal'
+          },
+          body: JSON.stringify(rowsToUpsert)
+        });
+      } catch (e) {}
+    }
+
+    function revertAllPesosCorrectionsFromPesosClear() {
+      ensureCrossReconciliationsState();
+      const hadAny = (state.crossReconciliations.approved && state.crossReconciliations.approved.length > 0) ||
+                     (state.scaleCorrectionsApproved && state.scaleCorrectionsApproved.length > 0);
+      if (!hadAny) return;
+
+      const approvedIds = (state.crossReconciliations.approved || []).map(x => x.id);
+      for (const cid of approvedIds) {
+        revertApprovedCrossReconciliation(cid, true);
+      }
+
+      for (const sc of (state.scaleCorrectionsApproved || [])) {
+        const b = (state.blocks || []).find(x => x.id === sc.blockId);
+        const appSt = state.pesosAppByBlock && state.pesosAppByBlock[sc.blockId];
+        if (sc.type === 'DUPLICATE') {
+          if (b) b.peso = Math.round((Number(b.peso || 0) + Number(sc.kg || 0)) * 100) / 100;
+          if (appSt) {
+            appSt.caixasVol = Number(appSt.caixasVol || 0) + Number(sc.vol || 1);
+            appSt.caixasKg = Math.round((Number(appSt.caixasKg || 0) + Number(sc.kg || 0)) * 100) / 100;
+            appSt.totalVol = Number(appSt.totalVol || 0) + Number(sc.vol || 1);
+            appSt.totalKg = Math.round((Number(appSt.totalKg || 0) + Number(sc.kg || 0)) * 100) / 100;
+            if (b) b.vol = appSt.totalVol;
+            if (sc.removedLogSnapshot && Array.isArray(appSt.logs)) {
+              appSt.logs.push({ ...sc.removedLogSnapshot });
+            }
+          }
+        } else if (sc.type === 'TYPO') {
+          if (b) b.peso = Math.round((Number(b.peso || 0) + Number(sc.kg || 0)) * 100) / 100;
+          if (appSt) {
+            appSt.caixasKg = Math.round((Number(appSt.caixasKg || 0) + Number(sc.kg || 0)) * 100) / 100;
+            appSt.totalKg = Math.round((Number(appSt.totalKg || 0) + Number(sc.kg || 0)) * 100) / 100;
+          }
+        }
+        if (Array.isArray(state.ignoredScaleAnomalies) && sc.id) {
+          state.ignoredScaleAnomalies = state.ignoredScaleAnomalies.filter(id => id !== sc.id);
+        }
+      }
+      state.scaleCorrectionsApproved = [];
+      saveCatalogAndState();
+      renderAll();
+      showToast('↺ Correções de pesos foram limpas no Gestão de Pesos e restauradas na operação.');
     }
 
     // Executa a transferência/conciliação de volumes e peso no App entre dois destinos (Aprovação de sugestão ou Cruzamento Manual)
@@ -11927,8 +12122,10 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         id: crossId,
         fromBlockId,
         fromDestLabel: fromLabel,
+        fromPesosDest: mapBlockIdToGestaoPesosDest(fromBlockId, bFrom.dest),
         toBlockId,
         toDestLabel: toLabel,
+        toPesosDest: mapBlockIdToGestaoPesosDest(toBlockId, bTo.dest),
         vol: numVol,
         kg: numKg,
         fromTime: timeOrigin,
@@ -11939,11 +12136,12 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       });
 
       saveCatalogAndState();
+      syncPesosCorrectionsToBridge(false);
       renderAll();
       if (pesosChronoState.activeBlockId && document.getElementById('pesosChronoModalContainer')) {
         renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
       }
-      showToast(`✅ Cruzamento aprovado: ${numVol} vol (${numKg.toFixed(1)} kg) transferidos de ${fromLabel} para ${toLabel}!`);
+      showToast(`✅ Cruzamento aprovado e enviado ao Gestão de Pesos: ${numVol} vol (${numKg.toFixed(1)} kg) de ${fromLabel} → ${toLabel}!`);
       return true;
     }
 
@@ -11992,7 +12190,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       showToast('Sugestões ignoradas restauradas para reavaliação.');
     }
 
-    function revertApprovedCrossReconciliation(crossId) {
+    function revertApprovedCrossReconciliation(crossId, skipBridgeSync = false) {
       ensureCrossReconciliationsState();
       const idx = state.crossReconciliations.approved.findIndex(x => x.id === crossId);
       if (idx === -1) return;
@@ -12042,13 +12240,18 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
       state.crossReconciliations.approved.splice(idx, 1);
       saveCatalogAndState();
+      if (!skipBridgeSync) {
+        syncPesosCorrectionsToBridge(false);
+      }
       renderAll();
       if (pesosChronoState.activeBlockId && document.getElementById('pesosChronoModalContainer')) {
         renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
       } else if (document.getElementById('globalCrossDestModalWrapper')) {
         openGlobalCrossDestinationModal();
       }
-      showToast(`↺ Cruzamento entre ${rec.fromDestLabel} e ${rec.toDestLabel} desfeito.`);
+      if (!skipBridgeSync) {
+        showToast(`↺ Cruzamento entre ${rec.fromDestLabel} e ${rec.toDestLabel} desfeito e atualizado no Gestão de Pesos.`);
+      }
     }
 
     function openManualCrossReconciliationModal(prefillFromBlockId = '', prefillToBlockId = '', prefillVol = 1, prefillKg = 10, prefillTime = '', replaceSuggestionId = '') {
@@ -13914,35 +14117,101 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     }
 
     function fixScaleDuplicateAnomaly(blockId, dupVol, dupKg, anomalyId) {
+      ensureCrossReconciliationsState();
       const b = (state.blocks || []).find(x => x.id === blockId);
       if (!b) return;
-      b.peso = Math.max(0, Math.round((Number(b.peso || 0) - Number(dupKg || 0)) * 100) / 100);
+      const diag = analyzeBlockScaleAndWeightAi(blockId, null);
+      const dObj = (diag.duplicates || []).find(x => x.id === anomalyId);
+      const numVol = Math.max(1, Number(dupVol || dObj?.vol || 1));
+      const numKg = Math.max(0, Number(dupKg || dObj?.kg || 0));
+      const dupTime = dObj ? (dObj.time2 || dObj.time1 || '') : '';
+
+      b.peso = Math.max(0, Math.round((Number(b.peso || 0) - numKg) * 100) / 100);
+      let removedLogSnapshot = null;
+      const appSt = state.pesosAppByBlock && state.pesosAppByBlock[blockId];
+      if (appSt) {
+        appSt.caixasVol = Math.max(0, Number(appSt.caixasVol || 0) - numVol);
+        appSt.caixasKg = Math.max(0, Math.round((Number(appSt.caixasKg || 0) - numKg) * 100) / 100);
+        appSt.totalVol = Math.max(0, Number(appSt.totalVol || 0) - numVol);
+        appSt.totalKg = Math.max(0, Math.round((Number(appSt.totalKg || 0) - numKg) * 100) / 100);
+        b.vol = appSt.totalVol;
+        if (Array.isArray(appSt.logs)) {
+          const matchIdx = appSt.logs.findIndex(l => Number(l.vol || 1) === numVol && Math.abs(Number(l.kg || 0) - numKg) <= 0.15 && (!dupTime || l.time === dupTime));
+          if (matchIdx >= 0) {
+            removedLogSnapshot = { ...appSt.logs[matchIdx] };
+            appSt.logs.splice(matchIdx, 1);
+          }
+        }
+      }
+
       if (!state.ignoredScaleAnomalies) state.ignoredScaleAnomalies = [];
       if (anomalyId && !state.ignoredScaleAnomalies.includes(anomalyId)) {
         state.ignoredScaleAnomalies.push(anomalyId);
       }
+
+      state.scaleCorrectionsApproved.push({
+        id: anomalyId || (`DUP_${blockId}_${Date.now()}`),
+        type: 'DUPLICATE',
+        blockId,
+        dest: mapBlockIdToGestaoPesosDest(blockId, b.dest),
+        vol: numVol,
+        kg: numKg,
+        time: dupTime,
+        cat: dObj?.cat || 'CAIXA',
+        approvedAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
+        removedLogSnapshot,
+        sourceRecordIds: removedLogSnapshot && removedLogSnapshot.id ? [removedLogSnapshot.id] : []
+      });
+
       saveCatalogAndState();
+      syncPesosCorrectionsToBridge(false);
       renderAll();
       if (pesosChronoState.activeBlockId === blockId) {
         renderPesosChronologyModalBody(blockId);
       }
-      showToast(`✅ Duplicidade de ${dupKg.toFixed(1)} kg descontada no bloco ${exportDestNameForMinutaWeb(b.id, b.dest)}!`);
+      showToast(`✅ Duplicidade de ${numKg.toFixed(1)} kg descontada em ${exportDestNameForMinutaWeb(b.id, b.dest)} e enviada ao Gestão de Pesos!`);
     }
 
     function fixScaleTypoAnomaly(blockId, deltaKg, anomalyId) {
+      ensureCrossReconciliationsState();
       const b = (state.blocks || []).find(x => x.id === blockId);
       if (!b) return;
-      b.peso = Math.max(0.5, Math.round((Number(b.peso || 0) - Number(deltaKg || 0)) * 100) / 100);
+      const diag = analyzeBlockScaleAndWeightAi(blockId, null);
+      const tObj = (diag.typos || []).find(x => x.id === anomalyId);
+      const numDeltaKg = Math.max(0, Number(deltaKg || tObj?.deltaKg || 0));
+
+      b.peso = Math.max(0.5, Math.round((Number(b.peso || 0) - numDeltaKg) * 100) / 100);
+      const appSt = state.pesosAppByBlock && state.pesosAppByBlock[blockId];
+      if (appSt) {
+        appSt.caixasKg = Math.max(0.5, Math.round((Number(appSt.caixasKg || 0) - numDeltaKg) * 100) / 100);
+        appSt.totalKg = Math.max(0.5, Math.round((Number(appSt.totalKg || 0) - numDeltaKg) * 100) / 100);
+      }
+
       if (!state.ignoredScaleAnomalies) state.ignoredScaleAnomalies = [];
       if (anomalyId && !state.ignoredScaleAnomalies.includes(anomalyId)) {
         state.ignoredScaleAnomalies.push(anomalyId);
       }
+
+      state.scaleCorrectionsApproved.push({
+        id: anomalyId || (`TYPO_${blockId}_${Date.now()}`),
+        type: 'TYPO',
+        blockId,
+        dest: mapBlockIdToGestaoPesosDest(blockId, b.dest),
+        vol: 0,
+        kg: numDeltaKg,
+        appKg: tObj ? Number(tObj.appKg || 0) : 0,
+        suggestedKg: tObj ? Number(tObj.suggestedKg || 0) : 0,
+        time: tObj ? (tObj.time || '') : '',
+        approvedAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      });
+
       saveCatalogAndState();
+      syncPesosCorrectionsToBridge(false);
       renderAll();
       if (pesosChronoState.activeBlockId === blockId) {
         renderPesosChronologyModalBody(blockId);
       }
-      showToast(`✅ Erro de digitação corrigido (-${deltaKg.toFixed(1)} kg) em ${exportDestNameForMinutaWeb(b.id, b.dest)}!`);
+      showToast(`✅ Erro de digitação corrigido (-${numDeltaKg.toFixed(1)} kg) em ${exportDestNameForMinutaWeb(b.id, b.dest)} e enviado ao Gestão de Pesos!`);
     }
 
     function ignoreScaleAnomaly(anomalyId, blockId) {
