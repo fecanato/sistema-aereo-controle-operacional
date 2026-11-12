@@ -5431,7 +5431,7 @@
       );
     }
 
-    const TAMPERMONKEY_PREALERTA_SOURCE = "// ==UserScript==\n// @name         FedEx A\u00e9reo \u2014 Automa\u00e7\u00e3o de Pr\u00e9-Alerta (Power Apps)\n// @namespace    https://fedex.aereo.controle.operacional\n// @version      11.0.0\n// @description  Preenche automaticamente os 13 campos do Pr\u00e9-Alerta no Microsoft Power Apps (sele\u00e7\u00e3o instant\u00e2nea via teclado sem repeti\u00e7\u00e3o em ORIGEM/DESTINO e calend\u00e1rio DATA).\n// @author       Controle Operacional A\u00e9reo FedEx\n// @match        *://apps.powerapps.com/*\n// @match        *://*.powerapps.com/*\n// @match        *://*.powerplatform.com/*\n// @match        *://*.dynamics.com/*\n// @match        *://*.microsoft.com/*\n// @grant        unsafeWindow\n// @grant        GM_setValue\n// @grant        GM_getValue\n// @grant        GM_xmlhttpRequest\n// @connect      megozyczcjpqqozbdqrn.supabase.co\n// @run-at       document-idle\n// ==/UserScript==\n\n(function () {\n  'use strict';\n\n  const SUPABASE_URL = 'https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas';\n  const SUPABASE_KEY = 'sb_publishable_76xL9ys9iOhpK7nzNtX5mw_VZD3yKot';\n  const QUEUE_ROW_ID = '__SYS_PREALERTA_QUEUE__';\n  const IS_TOP_WINDOW = (window === window.top);\n\n  let currentPayload = null;\n  let fillInProgress = false;\n  let lastAutoFilledBlockKey = '';\n  let saveHookInstalledDocs = new WeakSet();\n\n  const sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\n  function normalizeText(s) {\n    return String(s || '')\n      .normalize('NFD')\n      .replace(/[\\u0300-\\u036f]/g, '')\n      .replace(/\\s+/g, ' ')\n      .toUpperCase()\n      .trim();\n  }\n\n  function normalizePowerAppsIata3(rawDest, rawBlockId) {\n    const combined = `${rawBlockId || ''} ${rawDest || ''}`\n      .replace(/\\|(DG|PALLET)/gi, ' ')\n      .replace(/\\b(DG|PALLET|SACA|CAIXAS|CAIXA|FORMAL|VIA)\\b/gi, ' ')\n      .toUpperCase();\n\n    if (/\\b(ITN|ITNA|IOS|ITN_IOS_TXT)\\b/.test(combined) || combined.includes('ITN/IOS') || combined.includes('ITN_IOS')) {\n      return 'IOS';\n    }\n    if (/\\b(JPA|JPAA|JOAO_PESSOA_VIA_RECIFE)\\b/.test(combined) || combined.includes('JOAO_PESSOA')) {\n      return 'REC';\n    }\n    if (/\\b(FOR|FORA)\\b/.test(combined) || combined.includes('FORTALEZA')) {\n      return 'FOR';\n    }\n    if (/\\b(BSB|BSBA)\\b/.test(combined) || combined.includes('BRASILIA')) {\n      return 'BSB';\n    }\n\n    const cleanDest = String(rawDest || rawBlockId || '')\n      .replace(/\\|(DG|PALLET)$/i, '')\n      .replace(/\\b(DG|PALLET|SACA|CAIXAS|CAIXA|FORMAL)\\b/gi, '')\n      .trim()\n      .toUpperCase();\n\n    const firstToken = cleanDest.split(/[\\s\\/_-]+/)[0] || '';\n    let code3 = firstToken.length === 4 && firstToken.endsWith('A') ? firstToken.slice(0, 3) : firstToken.slice(0, 3);\n    if (code3 === 'ITN') code3 = 'IOS';\n    if (code3 === 'JPA') code3 = 'REC';\n    return code3 || 'BSB';\n  }\n\n  function sanitizePayloadIata(p) {\n    if (!p || typeof p !== 'object') return p;\n    p.destino = normalizePowerAppsIata3(p.destino || p.blockLabel, p.blockId);\n    if (p.origem) {\n      p.origem = String(p.origem).trim().toUpperCase().slice(0, 3) || 'GRU';\n    }\n    if (p.pesoReal !== undefined && p.pesoReal !== null) {\n      p.pesoReal = String(p.pesoReal).replace('.', ',');\n    }\n    if (p.pesoTaxado !== undefined && p.pesoTaxado !== null) {\n      p.pesoTaxado = String(p.pesoTaxado).replace('.', ',');\n    }\n    if (p.valorTotal !== undefined && p.valorTotal !== null) {\n      p.valorTotal = String(p.valorTotal).replace('.', ',');\n    }\n    return p;\n  }\n\n  function cloudRequest(method, url, bodyObj = null) {\n    return new Promise((resolve) => {\n      const headers = {\n        apikey: SUPABASE_KEY,\n        Authorization: `Bearer ${SUPABASE_KEY}`,\n        'Content-Type': 'application/json'\n      };\n      if (method === 'POST') {\n        headers.Prefer = 'resolution=merge-duplicates,return=minimal';\n      }\n      if (typeof GM_xmlhttpRequest === 'function') {\n        GM_xmlhttpRequest({\n          method,\n          url,\n          headers,\n          data: bodyObj ? JSON.stringify(bodyObj) : undefined,\n          onload: (res) => {\n            if (res.status >= 200 && res.status < 300) {\n              try { resolve(res.responseText ? JSON.parse(res.responseText) : true); }\n              catch (e) { resolve(true); }\n            } else {\n              resolve(null);\n            }\n          },\n          onerror: () => resolve(null)\n        });\n      } else {\n        fetch(url, {\n          method,\n          headers,\n          body: bodyObj ? JSON.stringify(bodyObj) : undefined\n        })\n          .then(r => r.ok ? (method === 'GET' ? r.json() : true) : null)\n          .then(resolve)\n          .catch(() => resolve(null));\n      }\n    });\n  }\n\n  function checkUrlHashForPayload() {\n    try {\n      const hash = window.location.hash || '';\n      const m = hash.match(/fedex_pa=([^&]+)/);\n      if (m && m[1]) {\n        const jsonStr = decodeURIComponent(escape(atob(decodeURIComponent(m[1]))));\n        const parsed = sanitizePayloadIata(JSON.parse(jsonStr));\n        if (parsed && parsed.blockId) {\n          saveLocalPayload(parsed);\n        }\n      }\n    } catch (e) {}\n  }\n\n  function saveLocalPayload(p) {\n    if (!p || !p.blockId) return;\n    p = sanitizePayloadIata(p);\n    currentPayload = p;\n    try { localStorage.setItem('fedex_pa_active_payload', JSON.stringify(p)); } catch (e) {}\n    try { if (typeof GM_setValue === 'function') GM_setValue('fedex_pa_active_payload', JSON.stringify(p)); } catch (e) {}\n  }\n\n  function loadLocalPayload() {\n    try {\n      if (typeof GM_getValue === 'function') {\n        const raw = GM_getValue('fedex_pa_active_payload', '');\n        if (raw) {\n          const p = sanitizePayloadIata(JSON.parse(raw));\n          if (p && p.blockId) return p;\n        }\n      }\n    } catch (e) {}\n    try {\n      const raw = localStorage.getItem('fedex_pa_active_payload');\n      if (raw) {\n        const p = sanitizePayloadIata(JSON.parse(raw));\n        if (p && p.blockId) return p;\n      }\n    } catch (e) {}\n    return null;\n  }\n\n  async function fetchCloudQueuePayload() {\n    const rows = await cloudRequest('GET', `${SUPABASE_URL}?select=dados,status&id=eq.${QUEUE_ROW_ID}`);\n    if (Array.isArray(rows) && rows[0] && rows[0].status === 'PENDENTE' && rows[0].dados && rows[0].dados.blockId) {\n      const d = sanitizePayloadIata(rows[0].dados);\n      if (!d.timestamp || (Date.now() - Number(d.timestamp)) < 45 * 60 * 1000) {\n        return d;\n      }\n    }\n    return null;\n  }\n\n  async function notifyPreAlertaConcluido(payload) {\n    if (!payload || !payload.blockId) return;\n    const doneData = {\n      ...payload,\n      status: 'CONCLUIDO',\n      completedAt: Date.now()\n    };\n    try { localStorage.removeItem('fedex_pa_active_payload'); } catch (e) {}\n    try { if (typeof GM_setValue === 'function') GM_setValue('fedex_pa_active_payload', ''); } catch (e) {}\n\n    try {\n      if (!IS_TOP_WINDOW && window.top) {\n        window.top.postMessage({ type: 'FEDEX_PA_SALVAR_CLICKED', payload: doneData }, '*');\n      }\n      if (window.opener) {\n        window.opener.postMessage({ type: 'PREALERTA_CONCLUIDO', payload: doneData }, '*');\n      }\n      if (window.top && window.top.opener) {\n        window.top.opener.postMessage({ type: 'PREALERTA_CONCLUIDO', payload: doneData }, '*');\n      }\n    } catch (e) {}\n\n    await cloudRequest('POST', `${SUPABASE_URL}?on_conflict=id`, [{\n      id: QUEUE_ROW_ID,\n      destino: payload.blockId,\n      cia: payload.cia || 'TAM',\n      operador: 'POWERAPPS_TAMPERMONKEY',\n      status: 'CONCLUIDO',\n      operacao: payload.opId || 'ATIVA',\n      dados: doneData\n    }]);\n\n    updateHudStatus('\u2705 SALVO! Status atualizado p/ Pr\u00e9-Alerta Conclu\u00eddo no Controle Operacional.', '#10b981');\n  }\n\n  function getAllAccessibleDocuments(rootDoc = document) {\n    const docs = [rootDoc];\n    try {\n      const iframes = Array.from(rootDoc.querySelectorAll('iframe'));\n      for (const ifr of iframes) {\n        try {\n          if (ifr.contentDocument) {\n            docs.push(...getAllAccessibleDocuments(ifr.contentDocument));\n          }\n        } catch (e) {}\n      }\n    } catch (e) {}\n    return docs;\n  }\n\n  function broadcastToChildIframes(msgObj, rootDoc = document) {\n    try {\n      const iframes = Array.from(rootDoc.querySelectorAll('iframe'));\n      for (const ifr of iframes) {\n        try {\n          if (ifr.contentWindow) {\n            ifr.contentWindow.postMessage(msgObj, '*');\n          }\n          if (ifr.contentDocument) {\n            broadcastToChildIframes(msgObj, ifr.contentDocument);\n          }\n        } catch (e) {}\n      }\n    } catch (e) {}\n  }\n\n  function getPageWindow(doc) {\n    try {\n      if (doc && doc.defaultView) {\n        return doc.defaultView.wrappedJSObject || doc.defaultView;\n      }\n    } catch (e) {}\n    return (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;\n  }\n\n  function dispatchRealKey(doc, targetEl, keyName, codeVal) {\n    const el = targetEl || doc.activeElement || doc.body;\n    if (!el) return;\n    const win = doc.defaultView || window;\n    const pWin = getPageWindow(doc);\n    const KbEv = win.KeyboardEvent || KeyboardEvent;\n\n    for (const type of ['keydown', 'keypress', 'keyup']) {\n      if (type === 'keypress' && keyName !== 'Enter') continue;\n      try {\n        const ev = new KbEv(type, {\n          bubbles: true,\n          cancelable: true,\n          composed: true,\n          view: win,\n          key: keyName,\n          code: keyName,\n          keyCode: codeVal,\n          which: codeVal,\n          charCode: type === 'keypress' ? codeVal : 0\n        });\n        try {\n          Object.defineProperty(ev, 'keyCode', { get: () => codeVal });\n          Object.defineProperty(ev, 'which', { get: () => codeVal });\n        } catch (e) {}\n        el.dispatchEvent(ev);\n      } catch (e) {}\n    }\n\n    try {\n      if (pWin && typeof pWin.$ === 'function') {\n        const jqEv = pWin.$.Event('keydown', {\n          key: keyName,\n          code: keyName,\n          keyCode: codeVal,\n          which: codeVal\n        });\n        pWin.$(el).trigger(jqEv);\n      }\n    } catch (e) {}\n  }\n\n  function simulateRealClick(el, customX = null, customY = null) {\n    if (!el) return false;\n    if (el.namespaceURI && el.namespaceURI.includes('svg')) {\n      el = el.closest('button, [role=\"button\"], div, span') || el;\n    }\n    const doc = el.ownerDocument || document;\n    const win = doc.defaultView || window;\n    const rect = el.getBoundingClientRect();\n    const cx = customX !== null ? customX : (rect.left + rect.width / 2);\n    const cy = customY !== null ? customY : (rect.top + rect.height / 2);\n    const opts = { bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 1 };\n\n    try {\n      if (typeof win.PointerEvent === 'function') {\n        el.dispatchEvent(new win.PointerEvent('pointerdown', opts));\n      }\n      el.dispatchEvent(new win.MouseEvent('mousedown', opts));\n      try {\n        const focusable = el.closest('[tabindex], button, input, li, [role=\"option\"], [role=\"button\"], [role=\"gridcell\"], td') || el;\n        focusable.focus();\n      } catch (e) {}\n      if (typeof win.PointerEvent === 'function') {\n        el.dispatchEvent(new win.PointerEvent('pointerup', opts));\n      }\n      el.dispatchEvent(new win.MouseEvent('mouseup', opts));\n      el.dispatchEvent(new win.MouseEvent('click', opts));\n    } catch (e) {\n      try { el.click(); } catch (e2) {}\n    }\n    return true;\n  }\n\n  function setNativeInputValue(el, val) {\n    if (!el || val === undefined || val === null) return false;\n    const strVal = String(val);\n    const doc = el.ownerDocument || document;\n    const win = doc.defaultView || window;\n\n    try {\n      el.focus();\n    } catch (e) {}\n\n    try {\n      const proto = el.tagName === 'TEXTAREA'\n        ? (win.HTMLTextAreaElement || window.HTMLTextAreaElement).prototype\n        : (win.HTMLInputElement || window.HTMLInputElement).prototype;\n      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;\n      if (setter) {\n        setter.call(el, strVal);\n      } else {\n        el.value = strVal;\n      }\n    } catch (e) {\n      el.value = strVal;\n    }\n\n    try {\n      const Ev = win.Event || Event;\n      const KbEv = win.KeyboardEvent || KeyboardEvent;\n      el.dispatchEvent(new Ev('input', { bubbles: true, cancelable: true }));\n      el.dispatchEvent(new Ev('change', { bubbles: true, cancelable: true }));\n      el.dispatchEvent(new KbEv('keydown', { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));\n      el.dispatchEvent(new KbEv('keyup', { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));\n      el.dispatchEvent(new Ev('blur', { bubbles: true }));\n    } catch (e) {}\n\n    return true;\n  }\n\n  function findLabelRect(doc, labelCandidates) {\n    const norms = labelCandidates.map(normalizeText);\n    const allEls = Array.from(doc.querySelectorAll('.appmagic-label-text, .appmagic-label, label, div, span, p'));\n    let bestRect = null;\n    let bestArea = Infinity;\n\n    for (const el of allEls) {\n      const rawTxt = normalizeText(el.textContent || '').replace(/^\\*\\s*/, '').trim();\n      if (!rawTxt || rawTxt.length > 35) continue;\n      if (norms.includes(rawTxt)) {\n        const rect = el.getBoundingClientRect();\n        if (rect.width >= 10 && rect.width <= 600 && rect.height >= 8 && rect.height <= 120 && rect.top >= 0) {\n          const area = rect.width * rect.height;\n          if (area < bestArea) {\n            bestArea = area;\n            bestRect = rect;\n          }\n        }\n      }\n    }\n    return bestRect;\n  }\n\n  function findControlBelowLabel(doc, labelCandidates, selector) {\n    const lRect = findLabelRect(doc, labelCandidates);\n    if (!lRect) return null;\n    const controls = Array.from(doc.querySelectorAll(selector));\n    let bestEl = null;\n    let bestScore = Infinity;\n\n    for (const ctrl of controls) {\n      const r = ctrl.getBoundingClientRect();\n      if (r.width < 20 || r.height < 12 || r.top <= 0) continue;\n      const dy = r.top - lRect.top;\n      const dx = Math.abs(r.left - lRect.left);\n      if (dy >= 4 && dy <= 160 && dx <= 240) {\n        const score = dy * 2 + dx;\n        if (score < bestScore) {\n          bestScore = score;\n          bestEl = ctrl;\n        }\n      }\n    }\n    return bestEl;\n  }\n\n  function findPowerAppsFormDocument() {\n    const docs = getAllAccessibleDocuments(document);\n    for (const d of docs) {\n      const inputs = d.querySelectorAll('input, textarea');\n      if (inputs.length >= 5) return d;\n    }\n    return null;\n  }\n\n  function getOrderedFormInputs(doc) {\n    const all = Array.from(doc.querySelectorAll('input, textarea')).filter(el => {\n      const r = el.getBoundingClientRect();\n      if (r.width < 40 || r.height < 16 || r.top <= 0) return false;\n      if (el.closest('.powerapps-flyout, [role=\"dialog\"], [role=\"listbox\"]')) return false;\n      const style = (doc.defaultView || window).getComputedStyle(el);\n      if (style.display === 'none' || style.visibility === 'hidden') return false;\n      return true;\n    });\n    return all.sort((a, b) => {\n      const ra = a.getBoundingClientRect();\n      const rb = b.getBoundingClientRect();\n      if (Math.abs(ra.top - rb.top) > 35) return ra.top - rb.top;\n      return ra.left - rb.left;\n    });\n  }\n\n  function queryAllDeep(root) {\n    const result = [];\n    const walk = (node) => {\n      if (!node) return;\n      const els = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];\n      for (const el of els) {\n        result.push(el);\n        if (el.shadowRoot) walk(el.shadowRoot);\n      }\n    };\n    walk(root);\n    return result;\n  }\n\n  // ============================================================================\n  // 1. SELE\u00c7\u00c3O DO CAMPO DATA NO CALEND\u00c1RIO (Instant\u00e2nea)\n  // ============================================================================\n  function findCalendarOkButton(doc) {\n    const allEls = queryAllDeep(doc);\n    let bestOk = null;\n    let bestArea = Infinity;\n\n    for (const el of allEls) {\n      if (el.children && el.children.length > 3) continue;\n      const txt = normalizeText(el.textContent || el.value || '');\n      if (txt === 'OK') {\n        const r = el.getBoundingClientRect();\n        if (r.width >= 3 && r.width <= 380 && r.height >= 6 && r.height <= 160 && r.top > 150) {\n          const area = r.width * r.height;\n          if (area < bestArea) {\n            bestArea = area;\n            bestOk = el;\n          }\n        }\n      }\n    }\n    return bestOk;\n  }\n\n  function triggerCalendarClick(doc, el) {\n    if (!el) return;\n    const pWin = getPageWindow(doc);\n    const clickable = el.closest('button, [role=\"button\"], [role=\"gridcell\"], td, a, .pika-button, .ui-state-default') || el;\n    try { clickable.focus(); } catch (e) {}\n    try { el.focus(); } catch (e) {}\n    simulateRealClick(el);\n    try { el.click(); } catch (e) {}\n    if (clickable && clickable !== el) {\n      try { clickable.click(); } catch (e) {}\n    }\n    try {\n      if (pWin && typeof pWin.$ === 'function') {\n        pWin.$(el).trigger('click');\n        if (clickable && clickable !== el) pWin.$(clickable).trigger('click');\n      }\n    } catch (e) {}\n  }\n\n  async function fillPowerAppsDateField(doc, dataInputEl, dateStrBr) {\n    if (!dateStrBr) return false;\n    const parts = String(dateStrBr).trim().split('/');\n    if (parts.length !== 3) return false;\n    const dayInt = parseInt(parts[0], 10);\n\n    let iconBtn = doc.querySelector('.appmagic-datepicker-icon');\n    if (!iconBtn && dataInputEl) {\n      const r = dataInputEl.getBoundingClientRect();\n      iconBtn = doc.elementFromPoint(r.right + 18, r.top + r.height / 2)\n        || doc.elementFromPoint(r.right - 18, r.top + r.height / 2);\n    }\n\n    let okBtn = findCalendarOkButton(doc);\n    if (!okBtn) {\n      if (iconBtn) {\n        simulateRealClick(iconBtn);\n        await sleep(420);\n        okBtn = findCalendarOkButton(doc);\n      }\n      if (!okBtn && dataInputEl) {\n        simulateRealClick(dataInputEl);\n        await sleep(420);\n        okBtn = findCalendarOkButton(doc);\n      }\n    }\n\n    if (!okBtn) return false;\n    const okRect = okBtn.getBoundingClientRect();\n\n    const allEls = queryAllDeep(doc);\n    const dayCandidates = allEls.filter(el => {\n      if (el.children && el.children.length > 3) return false;\n      if ((el.textContent || '').trim() !== String(dayInt)) return false;\n      const r = el.getBoundingClientRect();\n      return (\n        r.width >= 3 &&\n        r.width <= 240 &&\n        r.height >= 6 &&\n        r.height <= 240 &&\n        r.top > 200 &&\n        r.bottom < (okRect.top - 5) &&\n        r.left < (okRect.right + 250)\n      );\n    });\n\n    let targetDayEl = null;\n    if (dayCandidates.length > 0) {\n      dayCandidates.sort((a, b) => {\n        const ra = a.getBoundingClientRect();\n        const rb = b.getBoundingClientRect();\n        if (Math.abs(ra.top - rb.top) > 30) return rb.top - ra.top;\n        return (ra.width * ra.height) - (rb.width * rb.height);\n      });\n      targetDayEl = dayCandidates[0];\n    }\n\n    if (targetDayEl) {\n      triggerCalendarClick(doc, targetDayEl);\n      await sleep(140);\n    }\n\n    const calFocusEl = targetDayEl\n      ? (targetDayEl.closest('[tabindex], td, button, [role=\"gridcell\"], .pika-single, .appmagic-datepicker-dialog') || targetDayEl)\n      : (doc.activeElement || okBtn);\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'ArrowDown', 40);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'ArrowDown', 40);\n    }\n    await sleep(110);\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'ArrowUp', 38);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'ArrowUp', 38);\n    }\n    await sleep(110);\n\n    if (targetDayEl) {\n      triggerCalendarClick(doc, targetDayEl);\n      await sleep(110);\n    }\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'Enter', 13);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'Enter', 13);\n    }\n    await sleep(180);\n\n    const freshOk = findCalendarOkButton(doc);\n    if (freshOk) {\n      triggerCalendarClick(doc, freshOk);\n      await sleep(180);\n    }\n\n    return true;\n  }\n\n  // ============================================================================\n  // 2. SELE\u00c7\u00c3O DE DROPDOWNS CL\u00c1SSICOS (CIA, SERVI\u00c7O, Prefixo CIA, TIPO)\n  // ============================================================================\n  async function selectClassicDropdown(doc, labelCandidates, targetValue, fallbackCurrentTexts = []) {\n    if (!targetValue) return false;\n    const targetNorm = normalizeText(targetValue);\n\n    let triggerEl = findControlBelowLabel(\n      doc,\n      labelCandidates,\n      '.appmagic-dropdownLabel, .appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"][aria-haspopup], select'\n    );\n\n    if (!triggerEl) {\n      const lRect = findLabelRect(doc, labelCandidates);\n      if (lRect) {\n        const probeX = lRect.left + Math.min(Math.max(lRect.width / 2, 45), 90);\n        const probeY = lRect.bottom + 24;\n        const hit = doc.elementFromPoint(probeX, probeY);\n        if (hit) {\n          triggerEl = hit.closest('.appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"]') || hit;\n        }\n      }\n    }\n\n    if (!triggerEl && fallbackCurrentTexts.length > 0) {\n      const fbNorms = fallbackCurrentTexts.map(normalizeText);\n      const candidates = Array.from(doc.querySelectorAll('.appmagic-dropdownLabel, .appmagic-dropdown, [role=\"listbox\"], [role=\"button\"], div, span'));\n      for (const c of candidates) {\n        if (c.children.length > 3) continue;\n        const t = normalizeText(c.textContent || '');\n        if (fbNorms.includes(t)) {\n          const r = c.getBoundingClientRect();\n          if (r.width >= 30 && r.height >= 15 && r.top > 0) {\n            triggerEl = c;\n            break;\n          }\n        }\n      }\n    }\n\n    if (!triggerEl) return false;\n\n    const currentTxt = normalizeText(triggerEl.textContent || '');\n    if (currentTxt === targetNorm) return true;\n\n    const innerLabel = triggerEl.querySelector?.('.appmagic-dropdownLabel') || triggerEl.closest?.('.appmagic-dropdownLabel') || triggerEl;\n    const outerDrop = triggerEl.closest?.('.appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"]') || triggerEl;\n    simulateRealClick(innerLabel);\n    if (outerDrop && outerDrop !== innerLabel) simulateRealClick(outerDrop);\n    await sleep(240);\n\n    const optionSelectors = '.appmagic-dropdownListItem, .appmagic-dropdownFlyout li, .appmagic-dropdownFlyout div, [role=\"option\"], [role=\"listitem\"], .powerapps-flyout div, li';\n    let options = Array.from(doc.querySelectorAll(optionSelectors));\n    if (options.length === 0) {\n      options = Array.from(doc.querySelectorAll('div, span, li'));\n    }\n\n    const triggerRect = triggerEl.getBoundingClientRect();\n    for (const opt of options) {\n      if (opt === triggerEl || opt === innerLabel || opt.children.length > 2) continue;\n      const r = opt.getBoundingClientRect();\n      if (r.width < 6 || r.height < 8 || r.top <= 0) continue;\n      if (Math.abs(r.top - triggerRect.top) < 4 && Math.abs(r.left - triggerRect.left) < 4) continue;\n\n      const txt = normalizeText(opt.textContent || '');\n      if (txt === targetNorm || (targetNorm.length >= 4 && txt.startsWith(targetNorm))) {\n        simulateRealClick(opt);\n        await sleep(180);\n        return true;\n      }\n    }\n    return false;\n  }\n\n  // ============================================================================\n  // 3. SELE\u00c7\u00c3O INSTANT\u00c2NEA DE ORIGEM E DESTINO (v11.0 - Sem Repeti\u00e7\u00e3o)\n  // ============================================================================\n  // Na v10.0, o M\u00e9todo 1 (Foco na sugest\u00e3o / 2x ArrowDown + Enter) j\u00e1 selecionava o item,\n  // mas o script ca\u00eda nos fallbacks seguintes usando a refer\u00eancia antiga `|| targetOption`,\n  // fazendo-o voltar no campo e selecionar de novo (~1s extra).\n  // Agora executamos um \u00fanico fluxo enxuto e sa\u00edmos imediatamente assim que a lista fecha!\n  function typeIntoFlyoutSearchBox(doc, searchInput, text) {\n    if (!searchInput) return;\n    const win = doc.defaultView || window;\n    const pWin = getPageWindow(doc);\n\n    try { searchInput.focus(); } catch (e) {}\n\n    try {\n      const proto = (win.HTMLInputElement || window.HTMLInputElement).prototype;\n      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;\n      if (setter) setter.call(searchInput, String(text));\n      else searchInput.value = String(text);\n    } catch (e) {\n      searchInput.value = String(text);\n    }\n\n    try {\n      if (pWin && pWin.ko) {\n        const vm = pWin.ko.dataFor(searchInput) || (searchInput.parentElement && pWin.ko.dataFor(searchInput.parentElement));\n        if (vm) {\n          if (typeof vm.searchText === 'function') vm.searchText(String(text));\n          if (typeof vm.filterText === 'function') vm.filterText(String(text));\n        }\n      }\n    } catch (e) {}\n\n    try {\n      const Ev = win.Event || Event;\n      const KbEv = win.KeyboardEvent || KeyboardEvent;\n      const lastChar = String(text).slice(-1) || 'A';\n      const code = lastChar.charCodeAt(0);\n      searchInput.dispatchEvent(new KbEv('keydown', { bubbles: true, key: lastChar, keyCode: code, which: code }));\n      searchInput.dispatchEvent(new Ev('input', { bubbles: true, cancelable: true }));\n      searchInput.dispatchEvent(new KbEv('keyup', { bubbles: true, key: lastChar, keyCode: code, which: code }));\n    } catch (e) {}\n  }\n\n  async function selectComboBoxByGridRect(doc, boxRect, targetValue, plainInputsSet) {\n    if (!boxRect || !targetValue) return false;\n    const targetNorm = normalizeText(targetValue);\n\n    // 1. Clica dentro da caixa de ORIGEM / DESTINO para ativar o <input> pontilhado\n    const centerX = boxRect.left + 55;\n    const centerY = boxRect.top + boxRect.height / 2;\n    const chevronX = boxRect.right - 22;\n    const chevronY = boxRect.top + boxRect.height / 2;\n\n    const hitCenter = doc.elementFromPoint(centerX, centerY);\n    if (hitCenter) {\n      simulateRealClick(hitCenter, centerX, centerY);\n      await sleep(140);\n    }\n\n    const findSearchInput = () => {\n      if (doc.activeElement && doc.activeElement.tagName === 'INPUT' && !plainInputsSet.has(doc.activeElement)) {\n        return doc.activeElement;\n      }\n      const allInputsNow = Array.from(doc.querySelectorAll('input'));\n      return allInputsNow.find(inp => {\n        if (plainInputsSet.has(inp)) return false;\n        const r = inp.getBoundingClientRect();\n        return r.width > 30 && r.height > 10 && Math.abs(r.left - boxRect.left) < 100 && r.top >= (boxRect.top - 12) && r.top <= (boxRect.bottom + 60);\n      }) || null;\n    };\n\n    let flyoutSearchInput = findSearchInput();\n    if (!flyoutSearchInput) {\n      const hitChev = doc.elementFromPoint(chevronX, chevronY);\n      if (hitChev) {\n        simulateRealClick(hitChev, chevronX, chevronY);\n        await sleep(180);\n      }\n      flyoutSearchInput = findSearchInput();\n    }\n\n    // 2. Digita o destino no input pontilhado\n    if (flyoutSearchInput) {\n      try { flyoutSearchInput.focus(); } catch (e) {}\n      typeIntoFlyoutSearchBox(doc, flyoutSearchInput, targetValue);\n      await sleep(220);\n    }\n\n    const searchRect = flyoutSearchInput ? flyoutSearchInput.getBoundingClientRect() : boxRect;\n\n    // Verifica se a sugest\u00e3o filtrada est\u00e1 aberta logo abaixo do input\n    const findFilteredOptionBelow = () => {\n      const allEls = queryAllDeep(doc);\n      let bestEl = null;\n      let bestDistY = Infinity;\n\n      for (const el of allEls) {\n        if (el === flyoutSearchInput || plainInputsSet.has(el) || el.tagName === 'INPUT') continue;\n        if (el.children && el.children.length > 2) continue;\n        const txt = normalizeText(el.textContent || '');\n        if (txt !== targetNorm) continue;\n        const r = el.getBoundingClientRect();\n        if (r.width >= 3 && r.height >= 6 && r.left >= (boxRect.left - 45) && r.left <= (boxRect.right + 20)) {\n          const dy = r.top - (searchRect.bottom - 5);\n          if (dy >= 0 && dy <= 450) {\n            if (dy < bestDistY) {\n              bestDistY = dy;\n              bestEl = el;\n            }\n          }\n        }\n      }\n      return bestEl;\n    };\n\n    // 3. Executa a sequ\u00eancia de teclado (2x Seta p/ Baixo + Enter) UMA \u00daNICA VEZ e avan\u00e7a direto!\n    if (flyoutSearchInput) {\n      try { flyoutSearchInput.focus(); } catch (e) {}\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'ArrowDown', 40);\n      await sleep(90);\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'ArrowDown', 40);\n      await sleep(90);\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'Enter', 13);\n      await sleep(150);\n    }\n\n    // S\u00f3 executa o fallback de foco direto na linha se a sugest\u00e3o abaixo AINDA estiver aberta na tela\n    const stillOpenOption = findFilteredOptionBelow();\n    if (stillOpenOption) {\n      const focusableRow = stillOpenOption.closest('[tabindex], li, [role=\"option\"], [role=\"listitem\"], .appmagic-combobox-item, .itemTemplateContainer, div') || stillOpenOption;\n      try {\n        if (!focusableRow.hasAttribute('tabindex')) {\n          focusableRow.setAttribute('tabindex', '-1');\n        }\n        focusableRow.focus();\n      } catch (e) {}\n      try { stillOpenOption.focus(); } catch (e) {}\n      await sleep(80);\n      dispatchRealKey(doc, focusableRow, 'Enter', 13);\n      if (stillOpenOption !== focusableRow) {\n        dispatchRealKey(doc, stillOpenOption, 'Enter', 13);\n      }\n      await sleep(140);\n    }\n\n    return true;\n  }\n\n  // ============================================================================\n  // EXECU\u00c7\u00c3O COMPLETA DOS 13 CAMPOS\n  // ============================================================================\n  async function fillPowerAppsFormInDoc(doc, rawPayload) {\n    if (!doc || !rawPayload || fillInProgress) return false;\n    const p = sanitizePayloadIata(rawPayload);\n    fillInProgress = true;\n    updateHudStatus('\u23f3 Preenchendo os 13 campos no Power Apps...', '#f59e0b');\n\n    try {\n      const allClickable = Array.from(doc.querySelectorAll('button, [role=\"button\"], div, span'));\n      const btnCadastrar = allClickable.find(el => el.children.length <= 2 && normalizeText(el.textContent || '') === 'CADASTRAR AWB');\n      if (btnCadastrar && getOrderedFormInputs(doc).length < 5) {\n        simulateRealClick(btnCadastrar);\n        await sleep(900);\n      }\n\n      let filledCount = 0;\n\n      // 1. CIA (TAM, GOL, AZUL)\n      const okCia = await selectClassicDropdown(doc, ['CIA'], p.cia || 'TAM', ['GOL', 'TAM', 'LATAM', 'AZUL']);\n      if (okCia) filledCount++;\n      await sleep(220);\n\n      // 2. SERVI\u00c7O\n      const okServ = await selectClassicDropdown(\n        doc,\n        ['SERVICO', 'SERVI\u00c7O'],\n        p.servico || 'RESERVADO',\n        ['ECONOMICO', 'RAPIDO', 'URGENTE', 'RESERVADO', 'ESTANDAR', 'VELOZ']\n      );\n      if (okServ) filledCount++;\n      await sleep(160);\n\n      // 3. Prefixo CIA (957, 127, 577)\n      const okPref = await selectClassicDropdown(doc, ['PREFIXO CIA'], p.prefixoCia || '957', ['127', '957', '577']);\n      if (okPref) filledCount++;\n      await sleep(140);\n\n      // Os 7 inputs fixos do formul\u00e1rio:\n      // [0]=DATA, [1]=Final AWB Cia, [2]=TOTAL VOL CIA, [3]=PESO REAL, [4]=PESO TAXADO, [5]=VALOR TOTAL, [6]=AWB FEDEX\n      const formInputs = getOrderedFormInputs(doc);\n      const plainInputsSet = new Set(formInputs);\n\n      const dataInputEl     = formInputs[0];\n      const finalAwbInputEl = formInputs[1];\n      const volInputEl      = formInputs[2];\n      const pesoRealInputEl = formInputs[3];\n      const pesoTaxInputEl  = formInputs[4];\n      const valorInputEl    = formInputs[5];\n      const awbFedexBoxEl   = formInputs[formInputs.length - 1];\n\n      // 4. Final AWB Cia\n      if (finalAwbInputEl && p.finalAwbCia !== undefined) {\n        setNativeInputValue(finalAwbInputEl, p.finalAwbCia);\n        filledCount++;\n      }\n\n      // 5. TOTAL VOL CIA\n      if (volInputEl && p.volumes !== undefined) {\n        setNativeInputValue(volInputEl, p.volumes);\n        filledCount++;\n      }\n\n      // 6. PESO REAL\n      if (pesoRealInputEl && p.pesoReal !== undefined) {\n        setNativeInputValue(pesoRealInputEl, String(p.pesoReal).replace('.', ','));\n        filledCount++;\n      }\n\n      // 7. PESO TAXADO\n      if (pesoTaxInputEl && p.pesoTaxado !== undefined) {\n        setNativeInputValue(pesoTaxInputEl, String(p.pesoTaxado).replace('.', ','));\n        filledCount++;\n      }\n\n      // 8. VALOR TOTAL\n      if (valorInputEl && p.valorTotal !== undefined) {\n        setNativeInputValue(valorInputEl, String(p.valorTotal).replace('.', ','));\n        filledCount++;\n      }\n\n      // 9. TIPO (CONS NUMBER vs TRACKING NUMBER)\n      const okTipo = await selectClassicDropdown(doc, ['TIPO'], p.tipo || 'CONS NUMBER', ['TRACKING NUMBER', 'CONS NUMBER']);\n      if (okTipo) filledCount++;\n      await sleep(140);\n\n      // 10. AWB FEDEX\n      if (awbFedexBoxEl && Array.isArray(p.itens)) {\n        setNativeInputValue(awbFedexBoxEl, p.itens.join('\\n'));\n        filledCount++;\n      }\n\n      // 11. ORIGEM e 12. DESTINO (Sele\u00e7\u00e3o \u00fanica instant\u00e2nea sem repetir)\n      if (pesoRealInputEl && pesoTaxInputEl && finalAwbInputEl) {\n        const rRow3 = pesoRealInputEl.getBoundingClientRect();\n        const rCol1 = pesoTaxInputEl.getBoundingClientRect();\n        const rCol2 = finalAwbInputEl.getBoundingClientRect();\n\n        const origBoxRect = {\n          left: rCol1.left,\n          right: rCol1.right,\n          top: rRow3.top,\n          bottom: rRow3.bottom,\n          width: rCol1.width,\n          height: rRow3.height\n        };\n\n        const destBoxRect = {\n          left: rCol2.left,\n          right: rCol2.right,\n          top: rRow3.top,\n          bottom: rRow3.bottom,\n          width: rCol2.width,\n          height: rRow3.height\n        };\n\n        const okOrig = await selectComboBoxByGridRect(doc, origBoxRect, p.origem || 'GRU', plainInputsSet);\n        if (okOrig) filledCount++;\n        await sleep(140);\n\n        const okDest = await selectComboBoxByGridRect(doc, destBoxRect, p.destino || '', plainInputsSet);\n        if (okDest) filledCount++;\n        await sleep(140);\n      }\n\n      // 13. DATA\n      if (p.data) {\n        const okData = await fillPowerAppsDateField(doc, dataInputEl, p.data);\n        if (okData) filledCount++;\n      }\n\n      lastAutoFilledBlockKey = `${p.blockId}_${p.timestamp || ''}`;\n      installSalvarButtonHook(doc);\n      updateHudStatus(`\u2713 Campos preenchidos (${filledCount}/13)! Confira e clique em SALVAR.`, '#10b981');\n      return true;\n    } catch (err) {\n      updateHudStatus('\u26a0\ufe0f Erro parcial ao preencher: ' + (err.message || err), '#f59e0b');\n      return false;\n    } finally {\n      fillInProgress = false;\n    }\n  }\n\n  async function triggerFillEverywhere(p) {\n    if (!p) return;\n    p = sanitizePayloadIata(p);\n    const formDoc = findPowerAppsFormDocument();\n    if (formDoc) {\n      await fillPowerAppsFormInDoc(formDoc, p);\n    } else if (IS_TOP_WINDOW) {\n      updateHudStatus('\u23f3 Enviando preenchimento para o formul\u00e1rio do Power Apps...', '#f59e0b');\n      broadcastToChildIframes({ type: 'FEDEX_PA_EXEC_FILL', payload: p });\n    }\n  }\n\n  function installSalvarButtonHook(doc = document) {\n    if (!doc || saveHookInstalledDocs.has(doc)) return;\n    saveHookInstalledDocs.add(doc);\n    doc.addEventListener('click', (ev) => {\n      if (!currentPayload) return;\n      const target = ev.target;\n      if (!target) return;\n      const btn = target.closest('button, [role=\"button\"], div[class*=\"button\"], .appmagic-button');\n      const txt = normalizeText((btn || target).textContent || '');\n      if (txt === 'SALVAR') {\n        notifyPreAlertaConcluido(currentPayload);\n      }\n    }, true);\n  }\n\n  window.addEventListener('message', (ev) => {\n    const data = ev.data;\n    if (!data || typeof data !== 'object') return;\n\n    if (data.type === 'FEDEX_PA_SYNC_PAYLOAD' && data.payload && data.payload.blockId) {\n      saveLocalPayload(data.payload);\n      const formDoc = findPowerAppsFormDocument();\n      const bKey = `${data.payload.blockId}_${data.payload.timestamp || ''}`;\n      if (formDoc && lastAutoFilledBlockKey !== bKey) {\n        fillPowerAppsFormInDoc(formDoc, data.payload);\n      }\n    } else if (data.type === 'FEDEX_PA_EXEC_FILL' && data.payload) {\n      saveLocalPayload(data.payload);\n      const formDoc = findPowerAppsFormDocument();\n      if (formDoc) {\n        fillPowerAppsFormInDoc(formDoc, data.payload);\n      }\n    } else if (data.type === 'FEDEX_PA_HUD_STATUS' && IS_TOP_WINDOW) {\n      const el = document.getElementById('fedex-pa-hud-status');\n      if (el) {\n        el.textContent = data.msg;\n        el.style.color = data.color || '#38bdf8';\n      }\n    } else if (data.type === 'FEDEX_PA_SALVAR_CLICKED' && IS_TOP_WINDOW && data.payload) {\n      notifyPreAlertaConcluido(data.payload);\n    }\n  });\n\n  function renderOrUpdateHud(rawP) {\n    if (!rawP || !IS_TOP_WINDOW) return;\n    const p = sanitizePayloadIata(rawP);\n    let hud = document.getElementById('fedex-pa-autofill-hud');\n    if (!hud) {\n      hud = document.createElement('div');\n      hud.id = 'fedex-pa-autofill-hud';\n      hud.style.cssText = 'position:fixed;top:12px;right:12px;z-index:999999;width:320px;background:#0f172a;color:#f8fafc;border:2px solid #8b5cf6;border-radius:14px;box-shadow:0 15px 35px rgba(0,0,0,0.45);font-family:Inter,system-ui,sans-serif;font-size:12px;overflow:hidden;';\n      document.body.appendChild(hud);\n    }\n    const hudBlockKey = hud.getAttribute('data-block-key');\n    const newBlockKey = `${p.blockId}_${p.timestamp || ''}_${p.destino}`;\n    if (hudBlockKey === newBlockKey) return;\n    hud.setAttribute('data-block-key', newBlockKey);\n\n    hud.innerHTML = `\n      <div style=\"background:linear-gradient(90deg,#4d148c,#6d28d9);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;\">\n        <span style=\"font-weight:800;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;\">\u26a1 Pr\u00e9-Alerta FedEx v11 \u2022 ${p.blockLabel || p.destino}</span>\n        <button id=\"fedex-pa-hud-close\" style=\"background:none;border:none;color:#e2e8f0;cursor:pointer;font-weight:bold;font-size:13px;\">\u2715</button>\n      </div>\n      <div style=\"padding:10px 12px;\">\n        <div id=\"fedex-pa-hud-status\" style=\"padding:6px 8px;border-radius:8px;background:#1e293b;color:#38bdf8;font-weight:700;font-size:11px;margin-bottom:8px;\">\n          Pronto para preencher (${p.cia} \u2022 ${p.prefixoCia}-${p.finalAwbCia})\n        </div>\n        <div style=\"display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;font-size:11px;background:#1e293b;padding:8px;border-radius:8px;margin-bottom:8px;\">\n          <div><span style=\"color:#94a3b8;\">Data:</span> <b>${p.data}</b></div>\n          <div><span style=\"color:#94a3b8;\">CIA/Serv:</span> <b>${p.cia} / ${p.servico}</b></div>\n          <div><span style=\"color:#94a3b8;\">AWB Cia:</span> <b>${p.prefixoCia}-${p.finalAwbCia}</b></div>\n          <div><span style=\"color:#94a3b8;\">Rota:</span> <b>${p.origem} \u2192 ${p.destino}</b></div>\n          <div><span style=\"color:#94a3b8;\">Vol / Real:</span> <b>${p.volumes} / ${p.pesoReal}kg</b></div>\n          <div><span style=\"color:#94a3b8;\">Tax / Valor:</span> <b>${p.pesoTaxado}kg / R$ ${p.valorTotal}</b></div>\n          <div style=\"grid-column:span 2;\"><span style=\"color:#94a3b8;\">Tipo:</span> <b style=\"color:#c084fc;\">${p.tipo} (${(p.itens || []).length})</b></div>\n        </div>\n        <button id=\"fedex-pa-btn-refill\" style=\"width:100%;padding:7px 10px;border-radius:8px;border:none;background:#7c3aed;color:#fff;font-weight:700;font-size:11px;cursor:pointer;\">\n          \u26a1 Preencher Campos\n        </button>\n      </div>\n    `;\n\n    document.getElementById('fedex-pa-hud-close')?.addEventListener('click', () => hud.remove());\n    document.getElementById('fedex-pa-btn-refill')?.addEventListener('click', () => {\n      lastAutoFilledBlockKey = '';\n      triggerFillEverywhere(currentPayload);\n    });\n  }\n\n  function updateHudStatus(msg, colorHex) {\n    if (IS_TOP_WINDOW) {\n      const el = document.getElementById('fedex-pa-hud-status');\n      if (el) {\n        el.textContent = msg;\n        el.style.color = colorHex || '#38bdf8';\n      }\n    } else {\n      try {\n        window.top.postMessage({ type: 'FEDEX_PA_HUD_STATUS', msg, color: colorHex || '#38bdf8' }, '*');\n      } catch (e) {}\n    }\n  }\n\n  async function initLoop() {\n    checkUrlHashForPayload();\n    let p = loadLocalPayload();\n    if (!p) {\n      p = await fetchCloudQueuePayload();\n      if (p) saveLocalPayload(p);\n    }\n    if (p && p.blockId) {\n      p = sanitizePayloadIata(p);\n      currentPayload = p;\n      if (IS_TOP_WINDOW) {\n        renderOrUpdateHud(p);\n        broadcastToChildIframes({ type: 'FEDEX_PA_SYNC_PAYLOAD', payload: p });\n      }\n      const formDoc = findPowerAppsFormDocument();\n      if (formDoc) {\n        installSalvarButtonHook(formDoc);\n        const bKey = `${p.blockId}_${p.timestamp || ''}`;\n        if (lastAutoFilledBlockKey !== bKey && !fillInProgress) {\n          await fillPowerAppsFormInDoc(formDoc, p);\n        }\n      }\n    }\n  }\n\n  setInterval(initLoop, 1600);\n  setTimeout(initLoop, 500);\n})();\n";
+    const TAMPERMONKEY_PREALERTA_SOURCE = "// ==UserScript==\n// @name         FedEx A\u00e9reo \u2014 Automa\u00e7\u00e3o de Pr\u00e9-Alerta (Power Apps)\n// @namespace    https://fedex.aereo.controle.operacional\n// @version      11.1.0\n// @description  Preenche automaticamente os 13 campos do Pr\u00e9-Alerta no Microsoft Power Apps (sele\u00e7\u00e3o instant\u00e2nea via teclado sem repeti\u00e7\u00e3o em ORIGEM/DESTINO e calend\u00e1rio DATA).\n// @author       Controle Operacional A\u00e9reo FedEx\n// @match        *://apps.powerapps.com/*\n// @match        *://*.powerapps.com/*\n// @match        *://*.powerplatform.com/*\n// @match        *://*.dynamics.com/*\n// @match        *://*.microsoft.com/*\n// @grant        unsafeWindow\n// @grant        GM_setValue\n// @grant        GM_getValue\n// @grant        GM_xmlhttpRequest\n// @connect      megozyczcjpqqozbdqrn.supabase.co\n// @run-at       document-idle\n// ==/UserScript==\n\n(function () {\n  'use strict';\n\n  const SUPABASE_URL = 'https://megozyczcjpqqozbdqrn.supabase.co/rest/v1/minutas';\n  const SUPABASE_KEY = 'sb_publishable_76xL9ys9iOhpK7nzNtX5mw_VZD3yKot';\n  const QUEUE_ROW_ID = '__SYS_PREALERTA_QUEUE__';\n  const IS_TOP_WINDOW = (window === window.top);\n\n  let currentPayload = null;\n  let fillInProgress = false;\n  let lastAutoFilledBlockKey = '';\n  let saveHookInstalledDocs = new WeakSet();\n\n  const sleep = (ms) => new Promise(r => setTimeout(r, ms));\n\n  function normalizeText(s) {\n    return String(s || '')\n      .normalize('NFD')\n      .replace(/[\\u0300-\\u036f]/g, '')\n      .replace(/\\s+/g, ' ')\n      .toUpperCase()\n      .trim();\n  }\n\n  function normalizePowerAppsIata3(rawDest, rawBlockId) {\n    const combined = `${rawBlockId || ''} ${rawDest || ''}`\n      .replace(/\\|(DG|PALLET)/gi, ' ')\n      .replace(/\\b(DG|PALLET|SACA|CAIXAS|CAIXA|FORMAL|VIA)\\b/gi, ' ')\n      .toUpperCase();\n\n    if (/\\b(ITN|ITNA|IOS|ITN_IOS_TXT)\\b/.test(combined) || combined.includes('ITN/IOS') || combined.includes('ITN_IOS')) {\n      return 'IOS';\n    }\n    if (/\\b(JPA|JPAA|JOAO_PESSOA_VIA_RECIFE)\\b/.test(combined) || combined.includes('JOAO_PESSOA')) {\n      return 'REC';\n    }\n    if (/\\b(FOR|FORA)\\b/.test(combined) || combined.includes('FORTALEZA')) {\n      return 'FOR';\n    }\n    if (/\\b(BSB|BSBA)\\b/.test(combined) || combined.includes('BRASILIA')) {\n      return 'BSB';\n    }\n\n    const cleanDest = String(rawDest || rawBlockId || '')\n      .replace(/\\|(DG|PALLET)$/i, '')\n      .replace(/\\b(DG|PALLET|SACA|CAIXAS|CAIXA|FORMAL)\\b/gi, '')\n      .trim()\n      .toUpperCase();\n\n    const firstToken = cleanDest.split(/[\\s\\/_-]+/)[0] || '';\n    let code3 = firstToken.length === 4 && firstToken.endsWith('A') ? firstToken.slice(0, 3) : firstToken.slice(0, 3);\n    if (code3 === 'ITN') code3 = 'IOS';\n    if (code3 === 'JPA') code3 = 'REC';\n    return code3 || 'BSB';\n  }\n\n  function sanitizePayloadIata(p) {\n    if (!p || typeof p !== 'object') return p;\n    p.destino = normalizePowerAppsIata3(p.destino || p.blockLabel, p.blockId);\n    if (p.origem) {\n      p.origem = String(p.origem).trim().toUpperCase().slice(0, 3) || 'GRU';\n    }\n    if (p.pesoReal !== undefined && p.pesoReal !== null) {\n      p.pesoReal = String(p.pesoReal).replace('.', ',');\n    }\n    if (p.pesoTaxado !== undefined && p.pesoTaxado !== null) {\n      p.pesoTaxado = String(p.pesoTaxado).replace('.', ',');\n    }\n    if (p.valorTotal !== undefined && p.valorTotal !== null) {\n      p.valorTotal = String(p.valorTotal).replace('.', ',');\n    }\n    return p;\n  }\n\n  function cloudRequest(method, url, bodyObj = null) {\n    return new Promise((resolve) => {\n      const headers = {\n        apikey: SUPABASE_KEY,\n        Authorization: `Bearer ${SUPABASE_KEY}`,\n        'Content-Type': 'application/json'\n      };\n      if (method === 'POST') {\n        headers.Prefer = 'resolution=merge-duplicates,return=minimal';\n      }\n      if (typeof GM_xmlhttpRequest === 'function') {\n        GM_xmlhttpRequest({\n          method,\n          url,\n          headers,\n          data: bodyObj ? JSON.stringify(bodyObj) : undefined,\n          onload: (res) => {\n            if (res.status >= 200 && res.status < 300) {\n              try { resolve(res.responseText ? JSON.parse(res.responseText) : true); }\n              catch (e) { resolve(true); }\n            } else {\n              resolve(null);\n            }\n          },\n          onerror: () => resolve(null)\n        });\n      } else {\n        fetch(url, {\n          method,\n          headers,\n          body: bodyObj ? JSON.stringify(bodyObj) : undefined\n        })\n          .then(r => r.ok ? (method === 'GET' ? r.json() : true) : null)\n          .then(resolve)\n          .catch(() => resolve(null));\n      }\n    });\n  }\n\n  function checkUrlHashForPayload() {\n    try {\n      const hash = window.location.hash || '';\n      const m = hash.match(/fedex_pa=([^&]+)/);\n      if (m && m[1]) {\n        const jsonStr = decodeURIComponent(escape(atob(decodeURIComponent(m[1]))));\n        const parsed = sanitizePayloadIata(JSON.parse(jsonStr));\n        if (parsed && parsed.blockId) {\n          saveLocalPayload(parsed);\n        }\n      }\n    } catch (e) {}\n  }\n\n  function saveLocalPayload(p) {\n    if (!p || !p.blockId) return;\n    p = sanitizePayloadIata(p);\n    currentPayload = p;\n    try { localStorage.setItem('fedex_pa_active_payload', JSON.stringify(p)); } catch (e) {}\n    try { if (typeof GM_setValue === 'function') GM_setValue('fedex_pa_active_payload', JSON.stringify(p)); } catch (e) {}\n  }\n\n  function loadLocalPayload() {\n    try {\n      if (typeof GM_getValue === 'function') {\n        const raw = GM_getValue('fedex_pa_active_payload', '');\n        if (raw) {\n          const p = sanitizePayloadIata(JSON.parse(raw));\n          if (p && p.blockId) return p;\n        }\n      }\n    } catch (e) {}\n    try {\n      const raw = localStorage.getItem('fedex_pa_active_payload');\n      if (raw) {\n        const p = sanitizePayloadIata(JSON.parse(raw));\n        if (p && p.blockId) return p;\n      }\n    } catch (e) {}\n    return null;\n  }\n\n  async function fetchCloudQueuePayload() {\n    const rows = await cloudRequest('GET', `${SUPABASE_URL}?select=dados,status&id=eq.${QUEUE_ROW_ID}`);\n    if (Array.isArray(rows) && rows[0] && rows[0].status === 'PENDENTE' && rows[0].dados && rows[0].dados.blockId) {\n      const d = sanitizePayloadIata(rows[0].dados);\n      if (!d.timestamp || (Date.now() - Number(d.timestamp)) < 45 * 60 * 1000) {\n        return d;\n      }\n    }\n    return null;\n  }\n\n  async function notifyPreAlertaConcluido(payload) {\n    if (!payload || !payload.blockId) return;\n    const doneData = {\n      ...payload,\n      status: 'CONCLUIDO',\n      completedAt: Date.now()\n    };\n    try { localStorage.removeItem('fedex_pa_active_payload'); } catch (e) {}\n    try { if (typeof GM_setValue === 'function') GM_setValue('fedex_pa_active_payload', ''); } catch (e) {}\n\n    try {\n      if (!IS_TOP_WINDOW && window.top) {\n        window.top.postMessage({ type: 'FEDEX_PA_SALVAR_CLICKED', payload: doneData }, '*');\n      }\n      if (window.opener) {\n        window.opener.postMessage({ type: 'PREALERTA_CONCLUIDO', payload: doneData }, '*');\n      }\n      if (window.top && window.top.opener) {\n        window.top.opener.postMessage({ type: 'PREALERTA_CONCLUIDO', payload: doneData }, '*');\n      }\n    } catch (e) {}\n\n    await cloudRequest('POST', `${SUPABASE_URL}?on_conflict=id`, [{\n      id: QUEUE_ROW_ID,\n      destino: payload.blockId,\n      cia: payload.cia || 'TAM',\n      operador: 'POWERAPPS_TAMPERMONKEY',\n      status: 'CONCLUIDO',\n      operacao: payload.opId || 'ATIVA',\n      dados: doneData\n    }]);\n\n    updateHudStatus('\u2705 SALVO! Status atualizado p/ Pr\u00e9-Alerta Conclu\u00eddo no Controle Operacional.', '#10b981');\n  }\n\n  function getAllAccessibleDocuments(rootDoc = document) {\n    const docs = [rootDoc];\n    try {\n      const iframes = Array.from(rootDoc.querySelectorAll('iframe'));\n      for (const ifr of iframes) {\n        try {\n          if (ifr.contentDocument) {\n            docs.push(...getAllAccessibleDocuments(ifr.contentDocument));\n          }\n        } catch (e) {}\n      }\n    } catch (e) {}\n    return docs;\n  }\n\n  function broadcastToChildIframes(msgObj, rootDoc = document) {\n    try {\n      const iframes = Array.from(rootDoc.querySelectorAll('iframe'));\n      for (const ifr of iframes) {\n        try {\n          if (ifr.contentWindow) {\n            ifr.contentWindow.postMessage(msgObj, '*');\n          }\n          if (ifr.contentDocument) {\n            broadcastToChildIframes(msgObj, ifr.contentDocument);\n          }\n        } catch (e) {}\n      }\n    } catch (e) {}\n  }\n\n  function getPageWindow(doc) {\n    try {\n      if (doc && doc.defaultView) {\n        return doc.defaultView.wrappedJSObject || doc.defaultView;\n      }\n    } catch (e) {}\n    return (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;\n  }\n\n  function dispatchRealKey(doc, targetEl, keyName, codeVal) {\n    const el = targetEl || doc.activeElement || doc.body;\n    if (!el) return;\n    const win = doc.defaultView || window;\n    const pWin = getPageWindow(doc);\n    const KbEv = win.KeyboardEvent || KeyboardEvent;\n\n    for (const type of ['keydown', 'keypress', 'keyup']) {\n      if (type === 'keypress' && keyName !== 'Enter') continue;\n      try {\n        const ev = new KbEv(type, {\n          bubbles: true,\n          cancelable: true,\n          composed: true,\n          view: win,\n          key: keyName,\n          code: keyName,\n          keyCode: codeVal,\n          which: codeVal,\n          charCode: type === 'keypress' ? codeVal : 0\n        });\n        try {\n          Object.defineProperty(ev, 'keyCode', { get: () => codeVal });\n          Object.defineProperty(ev, 'which', { get: () => codeVal });\n        } catch (e) {}\n        el.dispatchEvent(ev);\n      } catch (e) {}\n    }\n\n    try {\n      if (pWin && typeof pWin.$ === 'function') {\n        const jqEv = pWin.$.Event('keydown', {\n          key: keyName,\n          code: keyName,\n          keyCode: codeVal,\n          which: codeVal\n        });\n        pWin.$(el).trigger(jqEv);\n      }\n    } catch (e) {}\n  }\n\n  function simulateRealClick(el, customX = null, customY = null) {\n    if (!el) return false;\n    if (el.namespaceURI && el.namespaceURI.includes('svg')) {\n      el = el.closest('button, [role=\"button\"], div, span') || el;\n    }\n    const doc = el.ownerDocument || document;\n    const win = doc.defaultView || window;\n    const rect = el.getBoundingClientRect();\n    const cx = customX !== null ? customX : (rect.left + rect.width / 2);\n    const cy = customY !== null ? customY : (rect.top + rect.height / 2);\n    const opts = { bubbles: true, cancelable: true, view: win, clientX: cx, clientY: cy, button: 0, buttons: 1 };\n\n    try {\n      if (typeof win.PointerEvent === 'function') {\n        el.dispatchEvent(new win.PointerEvent('pointerdown', opts));\n      }\n      el.dispatchEvent(new win.MouseEvent('mousedown', opts));\n      try {\n        const focusable = el.closest('[tabindex], button, input, li, [role=\"option\"], [role=\"button\"], [role=\"gridcell\"], td') || el;\n        focusable.focus();\n      } catch (e) {}\n      if (typeof win.PointerEvent === 'function') {\n        el.dispatchEvent(new win.PointerEvent('pointerup', opts));\n      }\n      el.dispatchEvent(new win.MouseEvent('mouseup', opts));\n      el.dispatchEvent(new win.MouseEvent('click', opts));\n    } catch (e) {\n      try { el.click(); } catch (e2) {}\n    }\n    return true;\n  }\n\n  function setNativeInputValue(el, val) {\n    if (!el || val === undefined || val === null) return false;\n    const strVal = String(val);\n    const doc = el.ownerDocument || document;\n    const win = doc.defaultView || window;\n\n    try {\n      el.focus();\n    } catch (e) {}\n\n    try {\n      const proto = el.tagName === 'TEXTAREA'\n        ? (win.HTMLTextAreaElement || window.HTMLTextAreaElement).prototype\n        : (win.HTMLInputElement || window.HTMLInputElement).prototype;\n      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;\n      if (setter) {\n        setter.call(el, strVal);\n      } else {\n        el.value = strVal;\n      }\n    } catch (e) {\n      el.value = strVal;\n    }\n\n    try {\n      const Ev = win.Event || Event;\n      const KbEv = win.KeyboardEvent || KeyboardEvent;\n      el.dispatchEvent(new Ev('input', { bubbles: true, cancelable: true }));\n      el.dispatchEvent(new Ev('change', { bubbles: true, cancelable: true }));\n      el.dispatchEvent(new KbEv('keydown', { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));\n      el.dispatchEvent(new KbEv('keyup', { bubbles: true, key: 'Enter', keyCode: 13, which: 13 }));\n      el.dispatchEvent(new Ev('blur', { bubbles: true }));\n    } catch (e) {}\n\n    return true;\n  }\n\n  function findLabelRect(doc, labelCandidates) {\n    const norms = labelCandidates.map(normalizeText);\n    const allEls = Array.from(doc.querySelectorAll('.appmagic-label-text, .appmagic-label, label, div, span, p'));\n    let bestRect = null;\n    let bestArea = Infinity;\n\n    for (const el of allEls) {\n      const rawTxt = normalizeText(el.textContent || '').replace(/^\\*\\s*/, '').trim();\n      if (!rawTxt || rawTxt.length > 35) continue;\n      if (norms.includes(rawTxt)) {\n        const rect = el.getBoundingClientRect();\n        if (rect.width >= 10 && rect.width <= 600 && rect.height >= 8 && rect.height <= 120 && rect.top >= 0) {\n          const area = rect.width * rect.height;\n          if (area < bestArea) {\n            bestArea = area;\n            bestRect = rect;\n          }\n        }\n      }\n    }\n    return bestRect;\n  }\n\n  function findControlBelowLabel(doc, labelCandidates, selector) {\n    const lRect = findLabelRect(doc, labelCandidates);\n    if (!lRect) return null;\n    const controls = Array.from(doc.querySelectorAll(selector));\n    let bestEl = null;\n    let bestScore = Infinity;\n\n    for (const ctrl of controls) {\n      const r = ctrl.getBoundingClientRect();\n      if (r.width < 20 || r.height < 12 || r.top <= 0) continue;\n      const dy = r.top - lRect.top;\n      const dx = Math.abs(r.left - lRect.left);\n      if (dy >= 4 && dy <= 160 && dx <= 240) {\n        const score = dy * 2 + dx;\n        if (score < bestScore) {\n          bestScore = score;\n          bestEl = ctrl;\n        }\n      }\n    }\n    return bestEl;\n  }\n\n  function findPowerAppsFormDocument() {\n    const docs = getAllAccessibleDocuments(document);\n    for (const d of docs) {\n      const inputs = d.querySelectorAll('input, textarea');\n      if (inputs.length >= 5) return d;\n    }\n    return null;\n  }\n\n  function getOrderedFormInputs(doc) {\n    const all = Array.from(doc.querySelectorAll('input, textarea')).filter(el => {\n      const r = el.getBoundingClientRect();\n      if (r.width < 40 || r.height < 16 || r.top <= 0) return false;\n      if (el.closest('.powerapps-flyout, [role=\"dialog\"], [role=\"listbox\"]')) return false;\n      const style = (doc.defaultView || window).getComputedStyle(el);\n      if (style.display === 'none' || style.visibility === 'hidden') return false;\n      return true;\n    });\n    return all.sort((a, b) => {\n      const ra = a.getBoundingClientRect();\n      const rb = b.getBoundingClientRect();\n      if (Math.abs(ra.top - rb.top) > 35) return ra.top - rb.top;\n      return ra.left - rb.left;\n    });\n  }\n\n  function queryAllDeep(root) {\n    const result = [];\n    const walk = (node) => {\n      if (!node) return;\n      const els = node.querySelectorAll ? Array.from(node.querySelectorAll('*')) : [];\n      for (const el of els) {\n        result.push(el);\n        if (el.shadowRoot) walk(el.shadowRoot);\n      }\n    };\n    walk(root);\n    return result;\n  }\n\n  // ============================================================================\n  // 1. SELE\u00c7\u00c3O DO CAMPO DATA NO CALEND\u00c1RIO (Instant\u00e2nea)\n  // ============================================================================\n  function findCalendarOkButton(doc) {\n    const allEls = queryAllDeep(doc);\n    let bestOk = null;\n    let bestArea = Infinity;\n\n    for (const el of allEls) {\n      if (el.children && el.children.length > 3) continue;\n      const txt = normalizeText(el.textContent || el.value || '');\n      if (txt === 'OK') {\n        const r = el.getBoundingClientRect();\n        if (r.width >= 3 && r.width <= 380 && r.height >= 6 && r.height <= 160 && r.top > 150) {\n          const area = r.width * r.height;\n          if (area < bestArea) {\n            bestArea = area;\n            bestOk = el;\n          }\n        }\n      }\n    }\n    return bestOk;\n  }\n\n  function triggerCalendarClick(doc, el) {\n    if (!el) return;\n    const pWin = getPageWindow(doc);\n    const clickable = el.closest('button, [role=\"button\"], [role=\"gridcell\"], td, a, .pika-button, .ui-state-default') || el;\n    try { clickable.focus(); } catch (e) {}\n    try { el.focus(); } catch (e) {}\n    simulateRealClick(el);\n    try { el.click(); } catch (e) {}\n    if (clickable && clickable !== el) {\n      try { clickable.click(); } catch (e) {}\n    }\n    try {\n      if (pWin && typeof pWin.$ === 'function') {\n        pWin.$(el).trigger('click');\n        if (clickable && clickable !== el) pWin.$(clickable).trigger('click');\n      }\n    } catch (e) {}\n  }\n\n  async function fillPowerAppsDateField(doc, dataInputEl, dateStrBr) {\n    if (!dateStrBr) return false;\n    const parts = String(dateStrBr).trim().split('/');\n    if (parts.length !== 3) return false;\n    const dayInt = parseInt(parts[0], 10);\n\n    let iconBtn = doc.querySelector('.appmagic-datepicker-icon');\n    if (!iconBtn && dataInputEl) {\n      const r = dataInputEl.getBoundingClientRect();\n      iconBtn = doc.elementFromPoint(r.right + 18, r.top + r.height / 2)\n        || doc.elementFromPoint(r.right - 18, r.top + r.height / 2);\n    }\n\n    let okBtn = findCalendarOkButton(doc);\n    if (!okBtn) {\n      if (iconBtn) {\n        simulateRealClick(iconBtn);\n        await sleep(420);\n        okBtn = findCalendarOkButton(doc);\n      }\n      if (!okBtn && dataInputEl) {\n        simulateRealClick(dataInputEl);\n        await sleep(420);\n        okBtn = findCalendarOkButton(doc);\n      }\n    }\n\n    if (!okBtn) return false;\n    const okRect = okBtn.getBoundingClientRect();\n\n    const allEls = queryAllDeep(doc);\n    const dayCandidates = allEls.filter(el => {\n      if (el.children && el.children.length > 3) return false;\n      if ((el.textContent || '').trim() !== String(dayInt)) return false;\n      const r = el.getBoundingClientRect();\n      return (\n        r.width >= 3 &&\n        r.width <= 240 &&\n        r.height >= 6 &&\n        r.height <= 240 &&\n        r.top > 200 &&\n        r.bottom < (okRect.top - 5) &&\n        r.left < (okRect.right + 250)\n      );\n    });\n\n    let targetDayEl = null;\n    if (dayCandidates.length > 0) {\n      dayCandidates.sort((a, b) => {\n        const ra = a.getBoundingClientRect();\n        const rb = b.getBoundingClientRect();\n        if (Math.abs(ra.top - rb.top) > 30) return rb.top - ra.top;\n        return (ra.width * ra.height) - (rb.width * rb.height);\n      });\n      targetDayEl = dayCandidates[0];\n    }\n\n    if (targetDayEl) {\n      triggerCalendarClick(doc, targetDayEl);\n      await sleep(140);\n    }\n\n    const calFocusEl = targetDayEl\n      ? (targetDayEl.closest('[tabindex], td, button, [role=\"gridcell\"], .pika-single, .appmagic-datepicker-dialog') || targetDayEl)\n      : (doc.activeElement || okBtn);\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'ArrowDown', 40);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'ArrowDown', 40);\n    }\n    await sleep(110);\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'ArrowUp', 38);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'ArrowUp', 38);\n    }\n    await sleep(110);\n\n    if (targetDayEl) {\n      triggerCalendarClick(doc, targetDayEl);\n      await sleep(110);\n    }\n\n    dispatchRealKey(doc, doc.activeElement || calFocusEl, 'Enter', 13);\n    if (calFocusEl && calFocusEl !== doc.activeElement) {\n      dispatchRealKey(doc, calFocusEl, 'Enter', 13);\n    }\n    await sleep(180);\n\n    const freshOk = findCalendarOkButton(doc);\n    if (freshOk) {\n      triggerCalendarClick(doc, freshOk);\n      await sleep(180);\n    }\n\n    return true;\n  }\n\n  // ============================================================================\n  // 2. SELE\u00c7\u00c3O DE DROPDOWNS CL\u00c1SSICOS (CIA, SERVI\u00c7O, Prefixo CIA, TIPO)\n  // ============================================================================\n  async function selectClassicDropdown(doc, labelCandidates, targetValue, fallbackCurrentTexts = []) {\n    if (!targetValue) return false;\n    const targetNorm = normalizeText(targetValue);\n\n    let triggerEl = findControlBelowLabel(\n      doc,\n      labelCandidates,\n      '.appmagic-dropdownLabel, .appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"][aria-haspopup], select'\n    );\n\n    if (!triggerEl) {\n      const lRect = findLabelRect(doc, labelCandidates);\n      if (lRect) {\n        const probeX = lRect.left + Math.min(Math.max(lRect.width / 2, 45), 90);\n        const probeY = lRect.bottom + 24;\n        const hit = doc.elementFromPoint(probeX, probeY);\n        if (hit) {\n          triggerEl = hit.closest('.appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"]') || hit;\n        }\n      }\n    }\n\n    if (!triggerEl && fallbackCurrentTexts.length > 0) {\n      const fbNorms = fallbackCurrentTexts.map(normalizeText);\n      const candidates = Array.from(doc.querySelectorAll('.appmagic-dropdownLabel, .appmagic-dropdown, [role=\"listbox\"], [role=\"button\"], div, span'));\n      for (const c of candidates) {\n        if (c.children.length > 3) continue;\n        const t = normalizeText(c.textContent || '');\n        if (fbNorms.includes(t)) {\n          const r = c.getBoundingClientRect();\n          if (r.width >= 30 && r.height >= 15 && r.top > 0) {\n            triggerEl = c;\n            break;\n          }\n        }\n      }\n    }\n\n    if (!triggerEl) return false;\n\n    const currentTxt = normalizeText(triggerEl.textContent || '');\n    if (currentTxt === targetNorm) return true;\n\n    const innerLabel = triggerEl.querySelector?.('.appmagic-dropdownLabel') || triggerEl.closest?.('.appmagic-dropdownLabel') || triggerEl;\n    const outerDrop = triggerEl.closest?.('.appmagic-dropdown, [role=\"listbox\"], [role=\"combobox\"], [role=\"button\"]') || triggerEl;\n    simulateRealClick(innerLabel);\n    if (outerDrop && outerDrop !== innerLabel) simulateRealClick(outerDrop);\n    await sleep(240);\n\n    const optionSelectors = '.appmagic-dropdownListItem, .appmagic-dropdownFlyout li, .appmagic-dropdownFlyout div, [role=\"option\"], [role=\"listitem\"], .powerapps-flyout div, li';\n    let options = Array.from(doc.querySelectorAll(optionSelectors));\n    if (options.length === 0) {\n      options = Array.from(doc.querySelectorAll('div, span, li'));\n    }\n\n    const triggerRect = triggerEl.getBoundingClientRect();\n    for (const opt of options) {\n      if (opt === triggerEl || opt === innerLabel || opt.children.length > 2) continue;\n      const r = opt.getBoundingClientRect();\n      if (r.width < 6 || r.height < 8 || r.top <= 0) continue;\n      if (Math.abs(r.top - triggerRect.top) < 4 && Math.abs(r.left - triggerRect.left) < 4) continue;\n\n      const txt = normalizeText(opt.textContent || '');\n      if (txt === targetNorm || (targetNorm.length >= 4 && txt.startsWith(targetNorm))) {\n        simulateRealClick(opt);\n        await sleep(180);\n        return true;\n      }\n    }\n    return false;\n  }\n\n  // ============================================================================\n  // 3. SELE\u00c7\u00c3O INSTANT\u00c2NEA DE ORIGEM E DESTINO (v11.0 - Sem Repeti\u00e7\u00e3o)\n  // ============================================================================\n  // Na v10.0, o M\u00e9todo 1 (Foco na sugest\u00e3o / 2x ArrowDown + Enter) j\u00e1 selecionava o item,\n  // mas o script ca\u00eda nos fallbacks seguintes usando a refer\u00eancia antiga `|| targetOption`,\n  // fazendo-o voltar no campo e selecionar de novo (~1s extra).\n  // Agora executamos um \u00fanico fluxo enxuto e sa\u00edmos imediatamente assim que a lista fecha!\n  function typeIntoFlyoutSearchBox(doc, searchInput, text) {\n    if (!searchInput) return;\n    const win = doc.defaultView || window;\n    const pWin = getPageWindow(doc);\n\n    try { searchInput.focus(); } catch (e) {}\n\n    try {\n      const proto = (win.HTMLInputElement || window.HTMLInputElement).prototype;\n      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;\n      if (setter) setter.call(searchInput, String(text));\n      else searchInput.value = String(text);\n    } catch (e) {\n      searchInput.value = String(text);\n    }\n\n    try {\n      if (pWin && pWin.ko) {\n        const vm = pWin.ko.dataFor(searchInput) || (searchInput.parentElement && pWin.ko.dataFor(searchInput.parentElement));\n        if (vm) {\n          if (typeof vm.searchText === 'function') vm.searchText(String(text));\n          if (typeof vm.filterText === 'function') vm.filterText(String(text));\n        }\n      }\n    } catch (e) {}\n\n    try {\n      const Ev = win.Event || Event;\n      const KbEv = win.KeyboardEvent || KeyboardEvent;\n      const lastChar = String(text).slice(-1) || 'A';\n      const code = lastChar.charCodeAt(0);\n      searchInput.dispatchEvent(new KbEv('keydown', { bubbles: true, key: lastChar, keyCode: code, which: code }));\n      searchInput.dispatchEvent(new Ev('input', { bubbles: true, cancelable: true }));\n      searchInput.dispatchEvent(new KbEv('keyup', { bubbles: true, key: lastChar, keyCode: code, which: code }));\n    } catch (e) {}\n  }\n\n  async function selectComboBoxByGridRect(doc, boxRect, targetValue, plainInputsSet) {\n    if (!boxRect || !targetValue) return false;\n    const targetNorm = normalizeText(targetValue);\n\n    // 1. Clica dentro da caixa de ORIGEM / DESTINO para ativar o <input> pontilhado\n    const centerX = boxRect.left + 55;\n    const centerY = boxRect.top + boxRect.height / 2;\n    const chevronX = boxRect.right - 22;\n    const chevronY = boxRect.top + boxRect.height / 2;\n\n    const hitCenter = doc.elementFromPoint(centerX, centerY);\n    if (hitCenter) {\n      simulateRealClick(hitCenter, centerX, centerY);\n      await sleep(140);\n    }\n\n    const findSearchInput = () => {\n      if (doc.activeElement && doc.activeElement.tagName === 'INPUT' && !plainInputsSet.has(doc.activeElement)) {\n        return doc.activeElement;\n      }\n      const allInputsNow = Array.from(doc.querySelectorAll('input'));\n      return allInputsNow.find(inp => {\n        if (plainInputsSet.has(inp)) return false;\n        const r = inp.getBoundingClientRect();\n        return r.width > 30 && r.height > 10 && Math.abs(r.left - boxRect.left) < 100 && r.top >= (boxRect.top - 12) && r.top <= (boxRect.bottom + 60);\n      }) || null;\n    };\n\n    let flyoutSearchInput = findSearchInput();\n    if (!flyoutSearchInput) {\n      const hitChev = doc.elementFromPoint(chevronX, chevronY);\n      if (hitChev) {\n        simulateRealClick(hitChev, chevronX, chevronY);\n        await sleep(180);\n      }\n      flyoutSearchInput = findSearchInput();\n    }\n\n    // 2. Digita o destino no input pontilhado\n    if (flyoutSearchInput) {\n      try { flyoutSearchInput.focus(); } catch (e) {}\n      typeIntoFlyoutSearchBox(doc, flyoutSearchInput, targetValue);\n      await sleep(220);\n    }\n\n    const searchRect = flyoutSearchInput ? flyoutSearchInput.getBoundingClientRect() : boxRect;\n\n    // Verifica se a sugest\u00e3o filtrada est\u00e1 aberta logo abaixo do input\n    const findFilteredOptionBelow = () => {\n      const allEls = queryAllDeep(doc);\n      let bestEl = null;\n      let bestDistY = Infinity;\n\n      for (const el of allEls) {\n        if (el === flyoutSearchInput || plainInputsSet.has(el) || el.tagName === 'INPUT') continue;\n        if (el.children && el.children.length > 2) continue;\n        const txt = normalizeText(el.textContent || '');\n        if (txt !== targetNorm) continue;\n        const r = el.getBoundingClientRect();\n        if (r.width >= 3 && r.height >= 6 && r.left >= (boxRect.left - 45) && r.left <= (boxRect.right + 20)) {\n          const dy = r.top - (searchRect.bottom - 5);\n          if (dy >= 0 && dy <= 450) {\n            if (dy < bestDistY) {\n              bestDistY = dy;\n              bestEl = el;\n            }\n          }\n        }\n      }\n      return bestEl;\n    };\n\n    // 3. Executa a sequ\u00eancia de teclado (2x Seta p/ Baixo + Enter) UMA \u00daNICA VEZ e avan\u00e7a direto!\n    if (flyoutSearchInput) {\n      try { flyoutSearchInput.focus(); } catch (e) {}\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'ArrowDown', 40);\n      await sleep(90);\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'ArrowDown', 40);\n      await sleep(90);\n      dispatchRealKey(doc, doc.activeElement || flyoutSearchInput, 'Enter', 13);\n      await sleep(150);\n    }\n\n    // S\u00f3 executa o fallback de foco direto na linha se a sugest\u00e3o abaixo AINDA estiver aberta na tela\n    const stillOpenOption = findFilteredOptionBelow();\n    if (stillOpenOption) {\n      const focusableRow = stillOpenOption.closest('[tabindex], li, [role=\"option\"], [role=\"listitem\"], .appmagic-combobox-item, .itemTemplateContainer, div') || stillOpenOption;\n      try {\n        if (!focusableRow.hasAttribute('tabindex')) {\n          focusableRow.setAttribute('tabindex', '-1');\n        }\n        focusableRow.focus();\n      } catch (e) {}\n      try { stillOpenOption.focus(); } catch (e) {}\n      await sleep(80);\n      dispatchRealKey(doc, focusableRow, 'Enter', 13);\n      if (stillOpenOption !== focusableRow) {\n        dispatchRealKey(doc, stillOpenOption, 'Enter', 13);\n      }\n      await sleep(140);\n    }\n\n    return true;\n  }\n\n  // ============================================================================\n  // EXECU\u00c7\u00c3O COMPLETA DOS 13 CAMPOS\n  // ============================================================================\n  async function fillPowerAppsFormInDoc(doc, rawPayload) {\n    if (!doc || !rawPayload || fillInProgress) return false;\n    const p = sanitizePayloadIata(rawPayload);\n    fillInProgress = true;\n    updateHudStatus('\u23f3 Preenchendo os 13 campos no Power Apps...', '#f59e0b');\n\n    try {\n      const allClickable = Array.from(doc.querySelectorAll('button, [role=\"button\"], div, span'));\n      const btnCadastrar = allClickable.find(el => el.children.length <= 2 && normalizeText(el.textContent || '') === 'CADASTRAR AWB');\n      if (btnCadastrar && getOrderedFormInputs(doc).length < 5) {\n        simulateRealClick(btnCadastrar);\n        await sleep(900);\n      }\n\n      let filledCount = 0;\n\n      // 1. CIA (TAM, GOL, AZUL)\n      const okCia = await selectClassicDropdown(doc, ['CIA'], p.cia || 'TAM', ['GOL', 'TAM', 'LATAM', 'AZUL']);\n      if (okCia) filledCount++;\n      await sleep(220);\n\n      // 2. SERVI\u00c7O\n      const okServ = await selectClassicDropdown(\n        doc,\n        ['SERVICO', 'SERVI\u00c7O'],\n        p.servico || 'RESERVADO',\n        ['ECONOMICO', 'RAPIDO', 'URGENTE', 'RESERVADO', 'ESTANDAR', 'VELOZ']\n      );\n      if (okServ) filledCount++;\n      await sleep(160);\n\n      // 3. Prefixo CIA (957, 127, 577)\n      const okPref = await selectClassicDropdown(doc, ['PREFIXO CIA'], p.prefixoCia || '957', ['127', '957', '577']);\n      if (okPref) filledCount++;\n      await sleep(140);\n\n      // Os 7 inputs fixos do formul\u00e1rio:\n      // [0]=DATA, [1]=Final AWB Cia, [2]=TOTAL VOL CIA, [3]=PESO REAL, [4]=PESO TAXADO, [5]=VALOR TOTAL, [6]=AWB FEDEX\n      const formInputs = getOrderedFormInputs(doc);\n      const plainInputsSet = new Set(formInputs);\n\n      const dataInputEl     = formInputs[0];\n      const finalAwbInputEl = formInputs[1];\n      const volInputEl      = formInputs[2];\n      const pesoRealInputEl = formInputs[3];\n      const pesoTaxInputEl  = formInputs[4];\n      const valorInputEl    = formInputs[5];\n      const awbFedexBoxEl   = formInputs[formInputs.length - 1];\n\n      // 4. Final AWB Cia\n      if (finalAwbInputEl && p.finalAwbCia !== undefined) {\n        setNativeInputValue(finalAwbInputEl, p.finalAwbCia);\n        filledCount++;\n      }\n\n      // 5. TOTAL VOL CIA\n      if (volInputEl && p.volumes !== undefined) {\n        setNativeInputValue(volInputEl, p.volumes);\n        filledCount++;\n      }\n\n      // 6. PESO REAL\n      if (pesoRealInputEl && p.pesoReal !== undefined) {\n        setNativeInputValue(pesoRealInputEl, String(p.pesoReal).replace('.', ','));\n        filledCount++;\n      }\n\n      // 7. PESO TAXADO\n      if (pesoTaxInputEl && p.pesoTaxado !== undefined) {\n        setNativeInputValue(pesoTaxInputEl, String(p.pesoTaxado).replace('.', ','));\n        filledCount++;\n      }\n\n      // 8. VALOR TOTAL\n      if (valorInputEl && p.valorTotal !== undefined) {\n        setNativeInputValue(valorInputEl, String(p.valorTotal).replace('.', ','));\n        filledCount++;\n      }\n\n      // 9. TIPO (CONS NUMBER vs TRACKING NUMBER)\n      const okTipo = await selectClassicDropdown(doc, ['TIPO'], p.tipo || 'CONS NUMBER', ['TRACKING NUMBER', 'CONS NUMBER']);\n      if (okTipo) filledCount++;\n      await sleep(140);\n\n      // 10. AWB FEDEX\n      if (awbFedexBoxEl && Array.isArray(p.itens)) {\n        setNativeInputValue(awbFedexBoxEl, p.itens.join('\\n'));\n        filledCount++;\n      }\n\n      // 11. ORIGEM e 12. DESTINO (Sele\u00e7\u00e3o \u00fanica instant\u00e2nea sem repetir)\n      if (pesoRealInputEl && pesoTaxInputEl && finalAwbInputEl) {\n        const rRow3 = pesoRealInputEl.getBoundingClientRect();\n        const rCol1 = pesoTaxInputEl.getBoundingClientRect();\n        const rCol2 = finalAwbInputEl.getBoundingClientRect();\n\n        const origBoxRect = {\n          left: rCol1.left,\n          right: rCol1.right,\n          top: rRow3.top,\n          bottom: rRow3.bottom,\n          width: rCol1.width,\n          height: rRow3.height\n        };\n\n        const destBoxRect = {\n          left: rCol2.left,\n          right: rCol2.right,\n          top: rRow3.top,\n          bottom: rRow3.bottom,\n          width: rCol2.width,\n          height: rRow3.height\n        };\n\n        const okOrig = await selectComboBoxByGridRect(doc, origBoxRect, p.origem || 'GRU', plainInputsSet);\n        if (okOrig) filledCount++;\n        await sleep(140);\n\n        const okDest = await selectComboBoxByGridRect(doc, destBoxRect, p.destino || '', plainInputsSet);\n        if (okDest) filledCount++;\n        await sleep(140);\n      }\n\n      // 13. DATA\n      if (p.data) {\n        const okData = await fillPowerAppsDateField(doc, dataInputEl, p.data);\n        if (okData) filledCount++;\n      }\n\n      lastAutoFilledBlockKey = `${p.blockId}_${p.timestamp || ''}`;\n      installSalvarButtonHook(doc);\n      updateHudStatus(`\u2713 Campos preenchidos (${filledCount}/13)! Confira e clique em SALVAR.`, '#10b981');\n      return true;\n    } catch (err) {\n      updateHudStatus('\u26a0\ufe0f Erro parcial ao preencher: ' + (err.message || err), '#f59e0b');\n      return false;\n    } finally {\n      fillInProgress = false;\n    }\n  }\n\n  async function triggerFillEverywhere(p) {\n    if (!p) return;\n    p = sanitizePayloadIata(p);\n    const formDoc = findPowerAppsFormDocument();\n    if (formDoc) {\n      await fillPowerAppsFormInDoc(formDoc, p);\n    } else if (IS_TOP_WINDOW) {\n      updateHudStatus('\u23f3 Enviando preenchimento para o formul\u00e1rio do Power Apps...', '#f59e0b');\n      broadcastToChildIframes({ type: 'FEDEX_PA_EXEC_FILL', payload: p });\n    }\n  }\n\n  function installSalvarButtonHook(doc = document) {\n    if (!doc || saveHookInstalledDocs.has(doc)) return;\n    saveHookInstalledDocs.add(doc);\n    doc.addEventListener('click', (ev) => {\n      if (!currentPayload) return;\n      const target = ev.target;\n      if (!target) return;\n      const btn = target.closest('button, [role=\"button\"], div[class*=\"button\"], .appmagic-button');\n      const txt = normalizeText((btn || target).textContent || '');\n      if (txt === 'SALVAR') {\n        notifyPreAlertaConcluido(currentPayload);\n      }\n    }, true);\n  }\n\n  window.addEventListener('message', (ev) => {\n    const data = ev.data;\n    if (!data || typeof data !== 'object') return;\n\n    if (data.type === 'FEDEX_PA_SYNC_PAYLOAD' && data.payload && data.payload.blockId) {\n      saveLocalPayload(data.payload);\n      const formDoc = findPowerAppsFormDocument();\n      const bKey = `${data.payload.blockId}_${data.payload.timestamp || ''}`;\n      if (formDoc && lastAutoFilledBlockKey !== bKey) {\n        fillPowerAppsFormInDoc(formDoc, data.payload);\n      }\n    } else if (data.type === 'FEDEX_PA_EXEC_FILL' && data.payload) {\n      saveLocalPayload(data.payload);\n      const formDoc = findPowerAppsFormDocument();\n      if (formDoc) {\n        fillPowerAppsFormInDoc(formDoc, data.payload);\n      }\n    } else if (data.type === 'FEDEX_PA_HUD_STATUS' && IS_TOP_WINDOW) {\n      const el = document.getElementById('fedex-pa-hud-status');\n      if (el) {\n        el.textContent = data.msg;\n        el.style.color = data.color || '#38bdf8';\n      }\n    } else if (data.type === 'FEDEX_PA_SALVAR_CLICKED' && IS_TOP_WINDOW && data.payload) {\n      notifyPreAlertaConcluido(data.payload);\n    }\n  });\n\n  function renderOrUpdateHud(rawP) {\n    if (!rawP || !IS_TOP_WINDOW) return;\n    const p = sanitizePayloadIata(rawP);\n    let hud = document.getElementById('fedex-pa-autofill-hud');\n    if (!hud) {\n      hud = document.createElement('div');\n      hud.id = 'fedex-pa-autofill-hud';\n      hud.style.cssText = 'position:fixed;top:12px;right:12px;z-index:999999;width:320px;background:#0f172a;color:#f8fafc;border:2px solid #8b5cf6;border-radius:14px;box-shadow:0 15px 35px rgba(0,0,0,0.45);font-family:Inter,system-ui,sans-serif;font-size:12px;overflow:hidden;';\n      document.body.appendChild(hud);\n    }\n    const hudBlockKey = hud.getAttribute('data-block-key');\n    const newBlockKey = `${p.blockId}_${p.timestamp || ''}_${p.destino}`;\n    if (hudBlockKey === newBlockKey) return;\n    hud.setAttribute('data-block-key', newBlockKey);\n\n    hud.innerHTML = `\n      <div style=\"background:linear-gradient(90deg,#4d148c,#6d28d9);padding:8px 12px;display:flex;align-items:center;justify-content:space-between;\">\n        <span style=\"font-weight:800;font-size:11px;letter-spacing:0.04em;text-transform:uppercase;\">\u26a1 Pr\u00e9-Alerta FedEx v11.1 \u2022 ${p.blockLabel || p.destino}</span>\n        <button id=\"fedex-pa-hud-close\" style=\"background:none;border:none;color:#e2e8f0;cursor:pointer;font-weight:bold;font-size:13px;\">\u2715</button>\n      </div>\n      <div style=\"padding:10px 12px;\">\n        <div id=\"fedex-pa-hud-status\" style=\"padding:6px 8px;border-radius:8px;background:#1e293b;color:#38bdf8;font-weight:700;font-size:11px;margin-bottom:8px;\">\n          Pronto para preencher (${p.cia} \u2022 ${p.prefixoCia}-${p.finalAwbCia})\n        </div>\n        <div style=\"display:grid;grid-template-columns:1fr 1fr;gap:4px 8px;font-size:11px;background:#1e293b;padding:8px;border-radius:8px;margin-bottom:8px;\">\n          <div><span style=\"color:#94a3b8;\">Data:</span> <b>${p.data}</b></div>\n          <div><span style=\"color:#94a3b8;\">CIA/Serv:</span> <b>${p.cia} / ${p.servico}</b></div>\n          <div><span style=\"color:#94a3b8;\">AWB Cia:</span> <b>${p.prefixoCia}-${p.finalAwbCia}</b></div>\n          <div><span style=\"color:#94a3b8;\">Rota:</span> <b>${p.origem} \u2192 ${p.destino}</b></div>\n          <div><span style=\"color:#94a3b8;\">Vol / Real:</span> <b>${p.volumes} / ${p.pesoReal}kg</b></div>\n          <div><span style=\"color:#94a3b8;\">Tax / Valor:</span> <b>${p.pesoTaxado}kg / R$ ${p.valorTotal}</b></div>\n          <div style=\"grid-column:span 2;\"><span style=\"color:#94a3b8;\">Tipo:</span> <b style=\"color:#c084fc;\">${p.tipo} (${(p.itens || []).length})</b></div>\n        </div>\n        <button id=\"fedex-pa-btn-refill\" style=\"width:100%;padding:7px 10px;border-radius:8px;border:none;background:#7c3aed;color:#fff;font-weight:700;font-size:11px;cursor:pointer;\">\n          \u26a1 Preencher Campos\n        </button>\n      </div>\n    `;\n\n    document.getElementById('fedex-pa-hud-close')?.addEventListener('click', () => hud.remove());\n    document.getElementById('fedex-pa-btn-refill')?.addEventListener('click', () => {\n      lastAutoFilledBlockKey = '';\n      triggerFillEverywhere(currentPayload);\n    });\n  }\n\n  function updateHudStatus(msg, colorHex) {\n    if (IS_TOP_WINDOW) {\n      const el = document.getElementById('fedex-pa-hud-status');\n      if (el) {\n        el.textContent = msg;\n        el.style.color = colorHex || '#38bdf8';\n      }\n    } else {\n      try {\n        window.top.postMessage({ type: 'FEDEX_PA_HUD_STATUS', msg, color: colorHex || '#38bdf8' }, '*');\n      } catch (e) {}\n    }\n  }\n\n  async function initLoop() {\n    checkUrlHashForPayload();\n    let p = loadLocalPayload();\n    if (!p) {\n      p = await fetchCloudQueuePayload();\n      if (p) saveLocalPayload(p);\n    }\n    if (p && p.blockId) {\n      p = sanitizePayloadIata(p);\n      currentPayload = p;\n      if (IS_TOP_WINDOW) {\n        renderOrUpdateHud(p);\n        broadcastToChildIframes({ type: 'FEDEX_PA_SYNC_PAYLOAD', payload: p });\n      }\n      const formDoc = findPowerAppsFormDocument();\n      if (formDoc) {\n        installSalvarButtonHook(formDoc);\n        const bKey = `${p.blockId}_${p.timestamp || ''}`;\n        if (lastAutoFilledBlockKey !== bKey && !fillInProgress) {\n          await fillPowerAppsFormInDoc(formDoc, p);\n        }\n      }\n    }\n  }\n\n  setInterval(initLoop, 1600);\n  setTimeout(initLoop, 500);\n})();\n";
 
     function copyTampermonkeyPreAlertaScript() {
       copyTextFallback(TAMPERMONKEY_PREALERTA_SOURCE, '✅ Código do script Tampermonkey copiado! Cole no Tampermonkey e salve.');
@@ -12119,9 +12119,85 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         return a.mins - bLog.mins;
       });
 
-      // Agrupa Sistema por minuto (ex: 3 lançamentos de 1 vol às 20:09 -> sysGroup com items=[awb1, awb2, awb3], vol=3)
+      const slots = [];
+
+      // PASSO 0: Associações Manuais N ↔ M (1 pesagem p/ múltiplas coletas, 1 coleta p/ múltiplas pesagens, etc.)
+      // Processado ANTES do agrupamento por minuto para permitir juntar coletas de minutos distintos (ex: 18:06 + 18:07) na mesma pesagem (ex: 18:44)!
+      ensureCrossReconciliationsState();
+      const consumedSysItems = new Set();
+      const consumedAppEntries = new Set();
+      const manualLinksHere = (state.manualChronoLinks || []).filter(l => l && l.blockId === blockId);
+
+      for (const link of manualLinksHere) {
+        const awbSet = new Set(Array.isArray(link.awbs) ? link.awbs.map(String) : []);
+        const sysKeySet = new Set(Array.isArray(link.sysGroupKeys) ? link.sysGroupKeys : (link.sysGroupKey ? [link.sysGroupKey] : []));
+        const logIdSet = new Set(Array.isArray(link.logIds) ? link.logIds.map(String) : []);
+        const appKeySet = new Set(Array.isArray(link.appGroupKeys) ? link.appGroupKeys : (link.appGroupKey ? [link.appGroupKey] : []));
+
+        const linkedSys = sysBoxItems.filter(it => {
+          if (consumedSysItems.has(it)) return false;
+          if (awbSet.size > 0 && awbSet.has(String(it.awb))) return true;
+          const k = it.mins !== null ? `M_${it.mins}` : 'NO_TIME';
+          if (awbSet.size === 0 && sysKeySet.has(k)) return true;
+          return false;
+        });
+
+        const linkedApp = appBoxLogs.filter(en => {
+          if (consumedAppEntries.has(en)) return false;
+          if (logIdSet.size > 0 && logIdSet.has(String(en.id))) return true;
+          const k = en.mins !== null ? `M_${en.mins}` : `NO_TIME_${en.id}`;
+          if (logIdSet.size === 0 && appKeySet.has(k)) return true;
+          return false;
+        });
+
+        if (linkedSys.length > 0 && linkedApp.length > 0) {
+          linkedSys.forEach(it => consumedSysItems.add(it));
+          linkedApp.forEach(en => consumedAppEntries.add(en));
+
+          const sysVol = linkedSys.reduce((acc, x) => acc + x.vol, 0);
+          const sysKg = Math.round(linkedSys.reduce((acc, x) => acc + x.wt, 0) * 100) / 100;
+          const appVol = linkedApp.reduce((acc, x) => acc + x.vol, 0);
+          const appKg = Math.round(linkedApp.reduce((acc, x) => acc + x.kg, 0) * 100) / 100;
+
+          const uniqSysTimes = Array.from(new Set(linkedSys.map(x => x.time).filter(Boolean)));
+          const uniqAppTimes = Array.from(new Set(linkedApp.map(x => x.time).filter(Boolean)));
+          const sysTimeStr = uniqSysTimes.join(' + ') || '—';
+          const appTimeStr = uniqAppTimes.join(' + ') || '—';
+
+          const firstSysMins = linkedSys.find(x => x.mins !== null)?.mins ?? null;
+          const firstAppMins = linkedApp.find(x => x.mins !== null)?.mins ?? null;
+          const diffMins = (firstSysMins !== null && firstAppMins !== null) ? Math.abs(firstAppMins - firstSysMins) : 0;
+          const volEqual = (sysVol === appVol);
+
+          slots.push({
+            sortMins: firstSysMins !== null ? firstSysMins : (firstAppMins !== null ? firstAppMins : 9990),
+            sysTime: sysTimeStr,
+            appTime: appTimeStr,
+            sysMins: firstSysMins,
+            appMins: firstAppMins,
+            timeDiff: diffMins,
+            sysItems: linkedSys,
+            appEntries: linkedApp,
+            sysVol,
+            appVol,
+            sysKg,
+            appKg,
+            sysGroupKey: `MANUAL_SYS_${link.id}`,
+            appGroupKey: `MANUAL_APP_${link.id}`,
+            manualLinkId: link.id,
+            status: 'MANUAL_MATCH',
+            statusLabel: volEqual
+              ? `🔗 Associado Manualmente (${sysVol} vol Coleta ↔ ${appVol} vol Pesagem)`
+              : `🔗 Associado Manualmente (${sysVol} vol Coleta ↔ ${appVol} vol Pesagem · Clique p/ adicionar + volumes)`,
+            isDivergent: false
+          });
+        }
+      }
+
+      // Agrupa Sistema restante (não vinculado manualmente) por minuto
       const sysGroupsMap = new Map();
       for (const item of sysBoxItems) {
+        if (consumedSysItems.has(item)) continue;
         const key = item.mins !== null ? `M_${item.mins}` : 'NO_TIME';
         if (!sysGroupsMap.has(key)) {
           sysGroupsMap.set(key, {
@@ -12141,9 +12217,10 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       }
       const sysGroups = Array.from(sysGroupsMap.values());
 
-      // Agrupa App por minuto
+      // Agrupa App restante (não vinculado manualmente) por minuto
       const appGroupsMap = new Map();
       for (const entry of appBoxLogs) {
+        if (consumedAppEntries.has(entry)) continue;
         const key = entry.mins !== null ? `M_${entry.mins}` : `NO_TIME_${entry.id}`;
         if (!appGroupsMap.has(key)) {
           appGroupsMap.set(key, {
@@ -12162,51 +12239,6 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         g.kg = Math.round((g.kg + entry.kg) * 100) / 100;
       }
       const appGroups = Array.from(appGroupsMap.values());
-
-      const slots = [];
-
-      // PASSO 0: Associações Manuais Diretas entre Coleta (Sistema) e Pesagem (App) feitas pelo operador clicando nos cards
-      ensureCrossReconciliationsState();
-      const manualLinksHere = (state.manualChronoLinks || []).filter(l => l && l.blockId === blockId);
-      for (const link of manualLinksHere) {
-        const matchedSysGroups = sysGroups.filter(sg => !sg.matched && (
-          (link.sysGroupKey && sg.key === link.sysGroupKey) ||
-          (Array.isArray(link.awbs) && link.awbs.length > 0 && sg.items.some(it => link.awbs.includes(it.awb))) ||
-          (link.sysTime && sg.time === link.sysTime)
-        ));
-        const matchedAppGroups = appGroups.filter(ag => !ag.matched && (
-          (link.appGroupKey && ag.key === link.appGroupKey) ||
-          (Array.isArray(link.logIds) && link.logIds.length > 0 && ag.entries.some(en => link.logIds.includes(String(en.id)))) ||
-          (link.appTime && ag.time === link.appTime)
-        ));
-        if (matchedSysGroups.length > 0 && matchedAppGroups.length > 0) {
-          const sg = matchedSysGroups[0];
-          const ag = matchedAppGroups[0];
-          sg.matched = true;
-          ag.matched = true;
-          const diffMins = (sg.mins !== null && ag.mins !== null) ? Math.abs(ag.mins - sg.mins) : 0;
-          slots.push({
-            sortMins: sg.mins !== null ? sg.mins : (ag.mins !== null ? ag.mins : 9990),
-            sysTime: sg.time,
-            appTime: ag.time,
-            sysMins: sg.mins,
-            appMins: ag.mins,
-            timeDiff: diffMins,
-            sysItems: sg.items,
-            appEntries: ag.entries,
-            sysVol: sg.vol,
-            appVol: ag.vol,
-            sysKg: sg.kg,
-            appKg: ag.kg,
-            sysGroupKey: sg.key,
-            appGroupKey: ag.key,
-            manualLinkId: link.id,
-            status: 'MANUAL_MATCH',
-            statusLabel: `🔗 Associado Manualmente (${sg.vol} vol Coleta ↔ ${ag.vol} vol Pesagem)`,
-            isDivergent: false
-          });
-        }
-      }
 
       // PASSO 1: Match Exato (mesmo minuto + mesmo volume)
       for (const sg of sysGroups) {
@@ -13431,7 +13463,26 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       }
     }
 
+    function ensureChronoManualDraft(blockId) {
+      if (!pesosChronoState.manualDraft || pesosChronoState.manualDraft.blockId !== blockId) {
+        pesosChronoState.manualDraft = {
+          blockId,
+          editingLinkId: null,
+          sysItems: [], // [{ awb, groupKey, time, vol, kg }]
+          appEntries: [] // [{ logId, groupKey, time, vol, kg }]
+        };
+      }
+      return pesosChronoState.manualDraft;
+    }
+
+    function hasActiveChronoManualDraft(blockId) {
+      const d = pesosChronoState.manualDraft;
+      if (!d || d.blockId !== blockId) return false;
+      return d.sysItems.length > 0 || d.appEntries.length > 0;
+    }
+
     function cancelChronoManualSelection() {
+      pesosChronoState.manualDraft = null;
       pesosChronoState.selectedManualItem = null;
       if (pesosChronoState.activeBlockId) {
         renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
@@ -13441,6 +13492,9 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
     function removeManualChronoLink(linkId) {
       ensureCrossReconciliationsState();
       state.manualChronoLinks = (state.manualChronoLinks || []).filter(l => l.id !== linkId);
+      if (pesosChronoState.manualDraft && pesosChronoState.manualDraft.editingLinkId === linkId) {
+        pesosChronoState.manualDraft = null;
+      }
       saveCatalogAndState();
       if (pesosChronoState.activeBlockId) {
         renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
@@ -13449,65 +13503,224 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       showToast('↺ Associação manual entre Coleta e Pesagem desfeita.');
     }
 
-    function handleChronoCardManualLinkClick(side, blockId, groupKey, timeStr, vol, kg, itemRefStr) {
+    function removeSingleItemFromManualChronoLink(linkId, side, refId) {
       ensureCrossReconciliationsState();
-      const cur = pesosChronoState.selectedManualItem;
-      if (cur && cur.blockId === blockId && cur.side === side && cur.groupKey === groupKey) {
-        pesosChronoState.selectedManualItem = null;
-        renderPesosChronologyModalBody(blockId);
-        return;
+      const link = (state.manualChronoLinks || []).find(l => l.id === linkId);
+      if (!link) return;
+      if (side === 'SYS' && Array.isArray(link.awbs)) {
+        link.awbs = link.awbs.filter(a => String(a) !== String(refId));
+        if (link.awbs.length === 0) {
+          removeManualChronoLink(linkId);
+          return;
+        }
+      } else if (side === 'APP' && Array.isArray(link.logIds)) {
+        link.logIds = link.logIds.filter(id => String(id) !== String(refId));
+        if (link.logIds.length === 0) {
+          removeManualChronoLink(linkId);
+          return;
+        }
       }
-      if (!cur || cur.blockId !== blockId || cur.side === side) {
-        pesosChronoState.selectedManualItem = {
-          side,
-          blockId,
-          groupKey,
-          time: timeStr,
-          vol: Number(vol || 1),
-          kg: Number(kg || 0),
-          refs: String(itemRefStr || '').split(',').map(s => s.trim()).filter(Boolean)
-        };
-        renderPesosChronologyModalBody(blockId);
-        showToast(side === 'SYS'
-          ? `📌 Coleta (${timeStr} · ${vol} vol) selecionada! Agora clique na Pesagem (App) correspondente para associar.`
-          : `📌 Pesagem (${timeStr} · ${vol} vol · ${Number(kg || 0).toFixed(1)} kg) selecionada! Agora clique na Coleta (Sistema) correspondente para associar.`);
-        return;
+      saveCatalogAndState();
+      if (pesosChronoState.activeBlockId) {
+        renderPesosChronologyModalBody(pesosChronoState.activeBlockId);
       }
+      if (activeTab === 'pesos') renderPesosTable();
+      showToast('Item removido da associação manual.');
+    }
 
-      // Lados opostos selecionados (SYS + APP ou APP + SYS) -> Cria associação manual imediatamente!
-      const sysSide = side === 'SYS' ? { groupKey, time: timeStr, vol: Number(vol || 1), kg: Number(kg || 0), refs: String(itemRefStr || '').split(',').filter(Boolean) } : cur;
-      const appSide = side === 'APP' ? { groupKey, time: timeStr, vol: Number(vol || 1), kg: Number(kg || 0), refs: String(itemRefStr || '').split(',').filter(Boolean) } : cur;
-
-      state.manualChronoLinks = (state.manualChronoLinks || []).filter(l =>
-        !(l.blockId === blockId && (l.sysGroupKey === sysSide.groupKey || l.appGroupKey === appSide.groupKey))
-      );
-
-      const newLink = {
-        id: 'MLINK_' + blockId + '_' + Date.now(),
+    function editExistingManualChronoLink(blockId, linkId) {
+      ensureCrossReconciliationsState();
+      const link = (state.manualChronoLinks || []).find(l => l.id === linkId && l.blockId === blockId);
+      if (!link) return;
+      const analysis = buildBlockChronologyAnalysis(blockId, pesosChronoState.toleranceMins);
+      const sl = analysis.slots.find(s => s.manualLinkId === linkId);
+      if (!sl) return;
+      pesosChronoState.manualDraft = {
         blockId,
-        sysGroupKey: sysSide.groupKey,
-        sysTime: sysSide.time,
-        sysVol: sysSide.vol,
-        sysKg: sysSide.kg,
-        awbs: sysSide.refs,
-        appGroupKey: appSide.groupKey,
-        appTime: appSide.time,
-        appVol: appSide.vol,
-        appKg: appSide.kg,
-        logIds: appSide.refs,
-        createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        editingLinkId: linkId,
+        sysItems: sl.sysItems.map(it => ({
+          awb: String(it.awb),
+          groupKey: it.mins !== null ? `M_${it.mins}` : 'NO_TIME',
+          time: it.time,
+          vol: Number(it.vol || 1),
+          kg: Number(it.wt || 0)
+        })),
+        appEntries: sl.appEntries.map(en => ({
+          logId: String(en.id),
+          groupKey: en.mins !== null ? `M_${en.mins}` : `NO_TIME_${en.id}`,
+          time: en.time,
+          vol: Number(en.vol || 1),
+          kg: Number(en.kg || 0)
+        }))
       };
+      renderPesosChronologyModalBody(blockId);
+      showToast('📌 Associação aberta para edição! Clique em outras Coletas ou Pesagens para incluir neste vínculo.');
+    }
 
-      state.manualChronoLinks.push(newLink);
-      pesosChronoState.selectedManualItem = null;
+    function mergeDraftIntoExistingManualLink(blockId, targetLinkId) {
+      ensureCrossReconciliationsState();
+      const draft = ensureChronoManualDraft(blockId);
+      const link = (state.manualChronoLinks || []).find(l => l.id === targetLinkId && l.blockId === blockId);
+      if (!link) return;
+
+      const awbSet = new Set(Array.isArray(link.awbs) ? link.awbs.map(String) : []);
+      const sysKeySet = new Set(Array.isArray(link.sysGroupKeys) ? link.sysGroupKeys : (link.sysGroupKey ? [link.sysGroupKey] : []));
+      const logIdSet = new Set(Array.isArray(link.logIds) ? link.logIds.map(String) : []);
+      const appKeySet = new Set(Array.isArray(link.appGroupKeys) ? link.appGroupKeys : (link.appGroupKey ? [link.appGroupKey] : []));
+
+      for (const s of draft.sysItems) {
+        if (s.awb) awbSet.add(String(s.awb));
+        if (s.groupKey) sysKeySet.add(s.groupKey);
+      }
+      for (const a of draft.appEntries) {
+        if (a.logId) logIdSet.add(String(a.logId));
+        if (a.groupKey) appKeySet.add(a.groupKey);
+      }
+
+      link.awbs = Array.from(awbSet);
+      link.sysGroupKeys = Array.from(sysKeySet);
+      link.logIds = Array.from(logIdSet);
+      link.appGroupKeys = Array.from(appKeySet);
+
+      pesosChronoState.manualDraft = null;
       saveCatalogAndState();
       renderPesosChronologyModalBody(blockId);
       if (activeTab === 'pesos') renderPesosTable();
-      showToast(`🔗 Associado manualmente: Coleta (${sysSide.time} · ${sysSide.vol} vol) ↔ Pesagem (${appSide.time} · ${appSide.vol} vol)!`);
+      showToast('🔗 Novo(s) item(ns) adicionado(s) à associação manual com sucesso!');
+    }
+
+    function commitChronoManualDraft(blockId) {
+      ensureCrossReconciliationsState();
+      const draft = pesosChronoState.manualDraft;
+      if (!draft || draft.blockId !== blockId || draft.sysItems.length === 0 || draft.appEntries.length === 0) {
+        showToast('Selecione pelo menos 1 Coleta (Sistema) e 1 Pesagem (App) para associar.');
+        return;
+      }
+
+      const newAwbs = draft.sysItems.map(x => String(x.awb)).filter(Boolean);
+      const newSysKeys = Array.from(new Set(draft.sysItems.map(x => x.groupKey).filter(Boolean)));
+      const newLogIds = draft.appEntries.map(x => String(x.logId)).filter(Boolean);
+      const newAppKeys = Array.from(new Set(draft.appEntries.map(x => x.groupKey).filter(Boolean)));
+
+      const sysVol = draft.sysItems.reduce((a, x) => a + x.vol, 0);
+      const sysKg = Math.round(draft.sysItems.reduce((a, x) => a + x.kg, 0) * 100) / 100;
+      const appVol = draft.appEntries.reduce((a, x) => a + x.vol, 0);
+      const appKg = Math.round(draft.appEntries.reduce((a, x) => a + x.kg, 0) * 100) / 100;
+      const sysTime = Array.from(new Set(draft.sysItems.map(x => x.time))).join(' + ');
+      const appTime = Array.from(new Set(draft.appEntries.map(x => x.time))).join(' + ');
+
+      if (draft.editingLinkId) {
+        state.manualChronoLinks = (state.manualChronoLinks || []).filter(l => l.id !== draft.editingLinkId);
+      }
+
+      // Remove itens das associações anteriores apenas se já pertenciam a outra associação
+      state.manualChronoLinks = (state.manualChronoLinks || []).filter(l => {
+        if (!l || l.blockId !== blockId) return true;
+        if (Array.isArray(l.awbs)) l.awbs = l.awbs.filter(a => !newAwbs.includes(String(a)));
+        if (Array.isArray(l.logIds)) l.logIds = l.logIds.filter(id => !newLogIds.includes(String(id)));
+        return (Array.isArray(l.awbs) ? l.awbs.length > 0 : Boolean(l.sysGroupKey)) &&
+               (Array.isArray(l.logIds) ? l.logIds.length > 0 : Boolean(l.appGroupKey));
+      });
+
+      state.manualChronoLinks.push({
+        id: draft.editingLinkId || ('MLINK_' + blockId + '_' + Date.now()),
+        blockId,
+        awbs: newAwbs,
+        sysGroupKeys: newSysKeys,
+        sysGroupKey: newSysKeys[0] || '',
+        sysTime,
+        sysVol,
+        sysKg,
+        logIds: newLogIds,
+        appGroupKeys: newAppKeys,
+        appGroupKey: newAppKeys[0] || '',
+        appTime,
+        appVol,
+        appKg,
+        createdAt: new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+      });
+
+      pesosChronoState.manualDraft = null;
+      saveCatalogAndState();
+      renderPesosChronologyModalBody(blockId);
+      if (activeTab === 'pesos') renderPesosTable();
+      showToast(`🔗 Associado manualmente: ${sysVol} vol Coleta (${sysTime}) ↔ ${appVol} vol Pesagem (${appTime})!`);
+    }
+
+    function handleChronoItemManualClick(side, blockId, itemId, groupKey, timeStr, vol, kg, existingLinkId = '') {
+      ensureCrossReconciliationsState();
+      const draft = ensureChronoManualDraft(blockId);
+
+      // Se o usuário já selecionou itens no rascunho e clicou num card que já faz parte de uma associação manual existente,
+      // junta automaticamente o(s) item(ns) selecionado(s) nessa associação existente!
+      if (existingLinkId && draft.editingLinkId !== existingLinkId && (draft.sysItems.length > 0 || draft.appEntries.length > 0)) {
+        mergeDraftIntoExistingManualLink(blockId, existingLinkId);
+        return;
+      }
+
+      // Se clicou num card de uma associação existente sem ter rascunho aberto, abre essa associação em modo de edição para adicionar mais coletas/pesagens nela!
+      if (existingLinkId && draft.sysItems.length === 0 && draft.appEntries.length === 0) {
+        editExistingManualChronoLink(blockId, existingLinkId);
+        return;
+      }
+
+      if (side === 'SYS') {
+        const idx = draft.sysItems.findIndex(x => String(x.awb) === String(itemId));
+        if (idx >= 0) {
+          draft.sysItems.splice(idx, 1);
+        } else {
+          draft.sysItems.push({
+            awb: String(itemId),
+            groupKey,
+            time: timeStr,
+            vol: Number(vol || 1),
+            kg: Number(kg || 0)
+          });
+        }
+      } else {
+        const idx = draft.appEntries.findIndex(x => String(x.logId) === String(itemId));
+        if (idx >= 0) {
+          draft.appEntries.splice(idx, 1);
+        } else {
+          draft.appEntries.push({
+            logId: String(itemId),
+            groupKey,
+            time: timeStr,
+            vol: Number(vol || 1),
+            kg: Number(kg || 0)
+          });
+        }
+      }
+
+      const totSysVol = draft.sysItems.reduce((a, x) => a + x.vol, 0);
+      const totAppVol = draft.appEntries.reduce((a, x) => a + x.vol, 0);
+
+      // Quando já há pelo menos 1 Coleta e 1 Pesagem selecionadas e a soma de volumes dos dois lados bateu (ex: 1+1 vol Coleta == 2 vol Pesagem, ou 2 vol Coleta == 1+1 vol Pesagem),
+      // conclui a associação automaticamente na hora!
+      if (draft.sysItems.length > 0 && draft.appEntries.length > 0 && totSysVol === totAppVol) {
+        commitChronoManualDraft(blockId);
+        return;
+      }
+
+      renderPesosChronologyModalBody(blockId);
+
+      if (draft.sysItems.length > 0 && draft.appEntries.length > 0) {
+        const diff = totAppVol - totSysVol;
+        if (diff > 0) {
+          showToast(`📌 ${totSysVol} vol Coleta ↔ ${totAppVol} vol Pesagem: selecione mais +${diff} vol de Coleta para fechar ${totAppVol} vol (ou clique em "Confirmar Associação" no topo)!`);
+        } else {
+          showToast(`📌 ${totSysVol} vol Coleta ↔ ${totAppVol} vol Pesagem: selecione mais +${Math.abs(diff)} vol de Pesagem para fechar ${totSysVol} vol (ou clique em "Confirmar Associação" no topo)!`);
+        }
+      } else if (draft.sysItems.length > 0) {
+        showToast(`📌 ${draft.sysItems.length} Coleta(s) selecionada(s) (${totSysVol} vol). Clique em mais Coletas para somar ou clique na Pesagem (App) correspondente!`);
+      } else if (draft.appEntries.length > 0) {
+        showToast(`📌 ${draft.appEntries.length} Pesagem(ns) selecionada(s) (${totAppVol} vol). Clique em mais Pesagens para somar ou clique nas Coletas (Sistema) correspondentes!`);
+      }
     }
 
     function openPesosChronologyModal(blockId) {
       if (pesosChronoState.activeBlockId !== blockId) {
+        pesosChronoState.manualDraft = null;
         pesosChronoState.selectedManualItem = null;
       }
       pesosChronoState.activeBlockId = blockId;
@@ -13648,15 +13861,13 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
         `;
       } else {
         timelineRowsHtml = visibleSlots.map(sl => {
-          const selManual = pesosChronoState.selectedManualItem;
-          const sysKeySlot = sl.sysGroupKey || (sl.sysMins !== null ? `M_${sl.sysMins}` : 'NO_TIME');
-          const appKeySlot = sl.appGroupKey || (sl.appMins !== null ? `M_${sl.appMins}` : `NO_TIME_${sl.appEntries[0]?.id || ''}`);
-          const isSysSelected = Boolean(selManual && selManual.blockId === blockId && selManual.side === 'SYS' && selManual.groupKey === sysKeySlot);
-          const isAppSelected = Boolean(selManual && selManual.blockId === blockId && selManual.side === 'APP' && selManual.groupKey === appKeySlot);
-          const isWaitingSysTarget = Boolean(selManual && selManual.blockId === blockId && selManual.side === 'APP');
-          const isWaitingAppTarget = Boolean(selManual && selManual.blockId === blockId && selManual.side === 'SYS');
-          const sysAwbsCsv = sl.sysItems.map(x => x.awb).filter(Boolean).join(',');
-          const appIdsCsv = sl.appEntries.map(x => x.id).filter(Boolean).join(',');
+          const draftNow = (pesosChronoState.manualDraft && pesosChronoState.manualDraft.blockId === blockId)
+            ? pesosChronoState.manualDraft
+            : null;
+          const hasDraftActive = Boolean(draftNow && (draftNow.sysItems.length > 0 || draftNow.appEntries.length > 0));
+          const selectedAwbsSet = new Set(draftNow ? draftNow.sysItems.map(x => String(x.awb)) : []);
+          const selectedLogIdsSet = new Set(draftNow ? draftNow.appEntries.map(x => String(x.logId)) : []);
+          const linkIdSlot = sl.manualLinkId || '';
 
           let rowBorder = 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900';
           let badgeTone = 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30';
@@ -13679,7 +13890,13 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
 
           let manualCrossSlotBtn = '';
           if (sl.status === 'MANUAL_MATCH' && sl.manualLinkId) {
-            manualCrossSlotBtn = `<button type="button" onclick="removeManualChronoLink('${sl.manualLinkId}')" class="px-2.5 py-0.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-600 hover:text-white dark:text-rose-300 font-bold text-[10px] transition">↺ Desfazer Associação Manual</button>`;
+            const joinBtnHtml = (hasDraftActive && draftNow.editingLinkId !== sl.manualLinkId)
+              ? `<button type="button" onclick="mergeDraftIntoExistingManualLink('${blockId}', '${sl.manualLinkId}')" class="px-2.5 py-0.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold text-[10px] shadow-2xs transition">🔗 Juntar Seleção a esta Associação</button>`
+              : `<button type="button" onclick="editExistingManualChronoLink('${blockId}', '${sl.manualLinkId}')" class="px-2.5 py-0.5 rounded-lg bg-indigo-500/15 hover:bg-indigo-600 text-indigo-700 hover:text-white dark:text-indigo-300 font-bold text-[10px] transition">＋ Adicionar + Coleta / Pesagem</button>`;
+            manualCrossSlotBtn = `
+              ${joinBtnHtml}
+              <button type="button" onclick="removeManualChronoLink('${sl.manualLinkId}')" class="px-2.5 py-0.5 rounded-lg bg-rose-500/15 hover:bg-rose-600 text-rose-600 hover:text-white dark:text-rose-300 font-bold text-[10px] transition">↺ Desfazer Associação Manual</button>
+            `;
           } else if (sl.isDivergent && sl.status !== 'SYNTHETIC_SUMMARY') {
             if (sl.appVol > sl.sysVol) {
               const exVol = sl.appVol - sl.sysVol;
@@ -13692,77 +13909,128 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
             }
           }
 
-          // Coluna Esquerda: SISTEMA (clicável para associar a uma Pesagem do App ou vice-versa)
+          // Coluna Esquerda: SISTEMA (cada AWB é clicável individualmente para permitir somar múltiplas coletas a 1 pesagem ou vice-versa!)
           const sysCardsHtml = sl.sysItems.length > 0
-            ? sl.sysItems.map(item => item.isAutoComail ? `
-                <div onmouseenter="showChronoAwbTooltip(event, 'COMAIL', '${item.time}', ${item.wt}, ${item.vol})"
-                     onmousemove="moveChronoAwbTooltip(event)"
-                     onmouseleave="hideChronoAwbTooltip()"
-                     onclick="showToast('✓ Carga COMAIL inserida e validada automaticamente no destino (não possui AWB).');"
-                     class="group relative p-2.5 rounded-xl border border-teal-300 dark:border-teal-700/80 bg-teal-50/70 dark:bg-teal-950/30 transition cursor-pointer flex items-center justify-between gap-2">
-                  <div>
-                    <div class="font-extrabold text-sm text-teal-950 dark:text-teal-200 leading-tight">${item.vol} vol</div>
-                    <div class="font-mono font-bold text-xs text-teal-700 dark:text-teal-300">${item.time}</div>
+            ? sl.sysItems.map(item => {
+                if (item.isAutoComail) {
+                  return `
+                    <div onmouseenter="showChronoAwbTooltip(event, 'COMAIL', '${item.time}', ${item.wt}, ${item.vol})"
+                         onmousemove="moveChronoAwbTooltip(event)"
+                         onmouseleave="hideChronoAwbTooltip()"
+                         onclick="showToast('✓ Carga COMAIL inserida e validada automaticamente no destino (não possui AWB).');"
+                         class="group relative p-2.5 rounded-xl border border-teal-300 dark:border-teal-700/80 bg-teal-50/70 dark:bg-teal-950/30 transition cursor-pointer flex items-center justify-between gap-2">
+                      <div>
+                        <div class="font-extrabold text-sm text-teal-950 dark:text-teal-200 leading-tight">${item.vol} vol</div>
+                        <div class="font-mono font-bold text-xs text-teal-700 dark:text-teal-300">${item.time}</div>
+                      </div>
+                      <div class="text-right">
+                        <div class="font-mono font-bold text-[11px] text-teal-800 dark:text-teal-200">
+                          ✓ COMAIL <span class="text-[10px] font-normal text-teal-600 dark:text-teal-400">(Sem AWB · Auto)</span>
+                        </div>
+                        <div class="text-[10px] font-mono text-teal-700 dark:text-teal-300 font-semibold">
+                          ${item.wt.toFixed(1)} kg · VALIDADO
+                        </div>
+                      </div>
+                    </div>
+                  `;
+                }
+                const itemGKey = item.mins !== null ? `M_${item.mins}` : 'NO_TIME';
+                const isThisSysSelected = selectedAwbsSet.has(String(item.awb));
+                const actionBadgeTxt = isThisSysSelected
+                  ? '✓ Coleta Selecionada (clique p/ remover)'
+                  : (linkIdSlot && hasDraftActive && draftNow.editingLinkId !== linkIdSlot
+                      ? '🔗 Juntar seleção a esta Associação'
+                      : (hasDraftActive && draftNow.sysItems.length > 0 && draftNow.appEntries.length === 0
+                          ? '＋ Somar mais esta Coleta'
+                          : (hasDraftActive && draftNow.appEntries.length > 0
+                              ? '🔗 Associar a esta Coleta'
+                              : '🔗 Associar a Pesagem')));
+                const cardCls = isThisSysSelected
+                  ? 'border-2 border-indigo-600 ring-2 ring-indigo-500/30 bg-indigo-50/80 dark:bg-indigo-950/50'
+                  : (hasDraftActive
+                      ? 'border-emerald-500/80 hover:border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20'
+                      : 'border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-400 bg-slate-50/90 dark:bg-slate-800/80 hover:bg-purple-50/50 dark:hover:bg-purple-950/30');
+                const removeSingleBtn = (linkIdSlot && sl.sysItems.length > 1)
+                  ? `<button type="button" onclick="event.stopPropagation(); removeSingleItemFromManualChronoLink('${linkIdSlot}', 'SYS', '${item.awb}');" class="px-1.5 py-0.5 rounded bg-rose-500/15 hover:bg-rose-600 text-rose-600 hover:text-white text-[9px] font-bold transition" title="Remover apenas esta coleta da associação">✕</button>`
+                  : '';
+
+                return `
+                  <div onmouseenter="showChronoAwbTooltip(event, '${item.awb}')"
+                       onmousemove="moveChronoAwbTooltip(event)"
+                       onmouseleave="hideChronoAwbTooltip()"
+                       onclick="handleChronoItemManualClick('SYS', '${blockId}', '${item.awb}', '${itemGKey}', '${item.time}', ${item.vol}, ${item.wt}, '${linkIdSlot}')"
+                       class="group relative p-2.5 rounded-xl border ${cardCls} transition cursor-pointer flex items-center justify-between gap-2">
+                    <div>
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="font-extrabold text-sm text-slate-900 dark:text-white leading-tight">${item.vol} vol</span>
+                        <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${isThisSysSelected ? 'bg-indigo-600 text-white' : (hasDraftActive ? 'bg-emerald-600 text-white' : 'bg-purple-500/15 text-purple-700 dark:text-purple-300')}">
+                          ${actionBadgeTxt}
+                        </span>
+                      </div>
+                      <div class="font-mono font-bold text-xs text-purple-700 dark:text-purple-300 mt-0.5">${item.time}</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200 flex items-center justify-end gap-1">
+                        <span>AWB ${item.awb.slice(-4)} <span class="text-[10px] font-normal text-slate-400">(${item.awb})</span></span>
+                        <button type="button" onclick="event.stopPropagation(); hideChronoAwbTooltip(); closeModal(); selectQuickAwb('${item.awb}');" class="px-1.5 py-0.5 rounded bg-slate-200/80 hover:bg-purple-600 hover:text-white dark:bg-slate-700 text-[9px] font-bold transition" title="Ir para esta AWB no Relatório">🔍</button>
+                        ${removeSingleBtn}
+                      </div>
+                      <div class="text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                        ${item.wt.toFixed(1)} kg · ${item.catLabel}
+                      </div>
+                    </div>
                   </div>
-                  <div class="text-right">
-                    <div class="font-mono font-bold text-[11px] text-teal-800 dark:text-teal-200">
-                      ✓ COMAIL <span class="text-[10px] font-normal text-teal-600 dark:text-teal-400">(Sem AWB · Auto)</span>
-                    </div>
-                    <div class="text-[10px] font-mono text-teal-700 dark:text-teal-300 font-semibold">
-                      ${item.wt.toFixed(1)} kg · VALIDADO
-                    </div>
-                  </div>
-                </div>
-              ` : `
-                <div onmouseenter="showChronoAwbTooltip(event, '${item.awb}')"
-                     onmousemove="moveChronoAwbTooltip(event)"
-                     onmouseleave="hideChronoAwbTooltip()"
-                     onclick="handleChronoCardManualLinkClick('SYS', '${blockId}', '${sysKeySlot}', '${sl.sysTime}', ${sl.sysVol}, ${sl.sysKg}, '${sysAwbsCsv}')"
-                     class="group relative p-2.5 rounded-xl border ${isSysSelected ? 'border-2 border-indigo-600 ring-2 ring-indigo-500/30 bg-indigo-50/80 dark:bg-indigo-950/50' : (isWaitingSysTarget ? 'border-emerald-500 hover:border-emerald-600 bg-emerald-50/40 dark:bg-emerald-950/25' : 'border-slate-200 dark:border-slate-700 hover:border-purple-500 dark:hover:border-purple-400 bg-slate-50/90 dark:bg-slate-800/80 hover:bg-purple-50/50 dark:hover:bg-purple-950/30')} transition cursor-pointer flex items-center justify-between gap-2">
-                  <div>
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-extrabold text-sm text-slate-900 dark:text-white leading-tight">${item.vol} vol</span>
-                      <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${isSysSelected ? 'bg-indigo-600 text-white' : (isWaitingSysTarget ? 'bg-emerald-600 text-white' : 'bg-purple-500/15 text-purple-700 dark:text-purple-300')}">
-                        ${isSysSelected ? '✓ Coleta Selecionada' : (isWaitingSysTarget ? '🔗 Associar a esta Coleta' : '🔗 Associar a Pesagem')}
-                      </span>
-                    </div>
-                    <div class="font-mono font-bold text-xs text-purple-700 dark:text-purple-300 mt-0.5">${item.time}</div>
-                  </div>
-                  <div class="text-right">
-                    <div class="font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200 flex items-center justify-end gap-1">
-                      <span>AWB ${item.awb.slice(-4)} <span class="text-[10px] font-normal text-slate-400">(${item.awb})</span></span>
-                      <button type="button" onclick="event.stopPropagation(); hideChronoAwbTooltip(); closeModal(); selectQuickAwb('${item.awb}');" class="px-1.5 py-0.5 rounded bg-slate-200/80 hover:bg-purple-600 hover:text-white dark:bg-slate-700 text-[9px] font-bold transition" title="Ir para esta AWB no Relatório">🔍</button>
-                    </div>
-                    <div class="text-[10px] font-mono text-slate-500 dark:text-slate-400">
-                      ${item.wt.toFixed(1)} kg · ${item.catLabel}
-                    </div>
-                  </div>
-                </div>
-              `).join('')
+                `;
+              }).join('')
             : `<div class="p-3 rounded-xl border border-dashed border-rose-300 dark:border-rose-800/70 text-center text-rose-600 dark:text-rose-400 font-semibold text-xs">
                  Nenhum volume coletado neste horário
                </div>`;
 
-          // Coluna Direita: APP (clicável para associar a uma Coleta do Sistema ou vice-versa)
+          // Coluna Direita: APP (cada lançamento de pesagem é clicável individualmente para permitir associar 1 pesagem a múltiplas coletas ou múltiplas pesagens a 1 coleta!)
           const appCardsHtml = sl.appEntries.length > 0
-            ? sl.appEntries.map(entry => `
-                <div onclick="handleChronoCardManualLinkClick('APP', '${blockId}', '${appKeySlot}', '${sl.appTime}', ${sl.appVol}, ${sl.appKg}, '${appIdsCsv}')"
-                     class="p-2.5 rounded-xl border ${isAppSelected ? 'border-2 border-indigo-600 ring-2 ring-indigo-500/30 bg-indigo-50/80 dark:bg-indigo-950/50' : (isWaitingAppTarget ? 'border-emerald-500 hover:border-emerald-600 bg-emerald-50/40 dark:bg-emerald-950/25' : 'border-purple-200/90 dark:border-purple-800/70 hover:border-purple-500 bg-purple-50/50 dark:bg-purple-950/25')} transition cursor-pointer flex items-center justify-between gap-2">
-                  <div>
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-extrabold text-sm text-purple-900 dark:text-purple-200 leading-tight">${entry.vol} vol</span>
-                      <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${isAppSelected ? 'bg-indigo-600 text-white' : (isWaitingAppTarget ? 'bg-emerald-600 text-white' : 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300')}">
-                        ${isAppSelected ? '✓ Pesagem Selecionada' : (isWaitingAppTarget ? '🔗 Associar a esta Pesagem' : '🔗 Associar a Coleta')}
-                      </span>
+            ? sl.appEntries.map(entry => {
+                const entryGKey = entry.mins !== null ? `M_${entry.mins}` : `NO_TIME_${entry.id}`;
+                const isThisAppSelected = selectedLogIdsSet.has(String(entry.id));
+                const actionBadgeTxt = isThisAppSelected
+                  ? '✓ Pesagem Selecionada (clique p/ remover)'
+                  : (linkIdSlot && hasDraftActive && draftNow.editingLinkId !== linkIdSlot
+                      ? '🔗 Juntar seleção a esta Associação'
+                      : (hasDraftActive && draftNow.appEntries.length > 0 && draftNow.sysItems.length === 0
+                          ? '＋ Somar mais esta Pesagem'
+                          : (hasDraftActive && draftNow.sysItems.length > 0
+                              ? '🔗 Associar a esta Pesagem'
+                              : '🔗 Associar a Coleta')));
+                const cardCls = isThisAppSelected
+                  ? 'border-2 border-indigo-600 ring-2 ring-indigo-500/30 bg-indigo-50/80 dark:bg-indigo-950/50'
+                  : (hasDraftActive
+                      ? 'border-emerald-500/80 hover:border-emerald-600 bg-emerald-50/30 dark:bg-emerald-950/20'
+                      : 'border-purple-200/90 dark:border-purple-800/70 hover:border-purple-500 bg-purple-50/50 dark:bg-purple-950/25');
+                const removeSingleAppBtn = (linkIdSlot && sl.appEntries.length > 1)
+                  ? `<button type="button" onclick="event.stopPropagation(); removeSingleItemFromManualChronoLink('${linkIdSlot}', 'APP', '${entry.id}');" class="ml-1 px-1.5 py-0.5 rounded bg-rose-500/15 hover:bg-rose-600 text-rose-600 hover:text-white text-[9px] font-bold transition" title="Remover apenas esta pesagem da associação">✕</button>`
+                  : '';
+
+                return `
+                  <div onclick="handleChronoItemManualClick('APP', '${blockId}', '${entry.id}', '${entryGKey}', '${entry.time}', ${entry.vol}, ${entry.kg}, '${linkIdSlot}')"
+                       class="p-2.5 rounded-xl border ${cardCls} transition cursor-pointer flex items-center justify-between gap-2">
+                    <div>
+                      <div class="flex items-center gap-1.5 flex-wrap">
+                        <span class="font-extrabold text-sm text-purple-900 dark:text-purple-200 leading-tight">${entry.vol} vol</span>
+                        <span class="px-1.5 py-0.2 rounded text-[9px] font-extrabold ${isThisAppSelected ? 'bg-indigo-600 text-white' : (hasDraftActive ? 'bg-emerald-600 text-white' : 'bg-indigo-500/15 text-indigo-700 dark:text-indigo-300')}">
+                          ${actionBadgeTxt}
+                        </span>
+                      </div>
+                      <div class="font-mono font-bold text-xs text-purple-700 dark:text-purple-300 mt-0.5">${entry.time}</div>
                     </div>
-                    <div class="font-mono font-bold text-xs text-purple-700 dark:text-purple-300 mt-0.5">${entry.time}</div>
+                    <div class="text-right">
+                      <div class="font-mono font-bold text-xs text-indigo-700 dark:text-indigo-300 flex items-center justify-end">
+                        <span>${entry.kg.toFixed(2)} kg</span>
+                        ${removeSingleAppBtn}
+                      </div>
+                      <div class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">${entry.cat}${entry.awb ? ' · AWB ' + entry.awb.slice(-4) : ''}${entry.reconciledFrom ? ` · Movido de ${entry.reconciledFrom}` : ''}</div>
+                    </div>
                   </div>
-                  <div class="text-right">
-                    <div class="font-mono font-bold text-xs text-indigo-700 dark:text-indigo-300">${entry.kg.toFixed(2)} kg</div>
-                    <div class="text-[10px] font-semibold text-slate-500 dark:text-slate-400">${entry.cat}${entry.awb ? ' · AWB ' + entry.awb.slice(-4) : ''}${entry.reconciledFrom ? ` · Movido de ${entry.reconciledFrom}` : ''}</div>
-                  </div>
-                </div>
-              `).join('')
+                `;
+              }).join('')
             : `<div class="p-3 rounded-xl border border-dashed border-rose-300 dark:border-rose-800/70 text-center text-rose-600 dark:text-rose-400 font-semibold text-xs">
                  ${analysis.hasAppSync ? 'Nenhum volume pesado neste horário' : 'Aguardando sincronização do Gestão de Pesos'}
                </div>`;
@@ -13868,32 +14136,58 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       }
 
       const aiScaleDiagHtml = buildAiWeightAndScaleAnomaliesHtmlForBlock(blockId, analysis);
-      const selManualNow = (pesosChronoState.selectedManualItem && pesosChronoState.selectedManualItem.blockId === blockId)
-        ? pesosChronoState.selectedManualItem
+      const draftBanner = (pesosChronoState.manualDraft && pesosChronoState.manualDraft.blockId === blockId && (pesosChronoState.manualDraft.sysItems.length > 0 || pesosChronoState.manualDraft.appEntries.length > 0))
+        ? pesosChronoState.manualDraft
         : null;
       const manualLinksBlock = (state.manualChronoLinks || []).filter(l => l && l.blockId === blockId);
 
-      const manualSelectionBannerHtml = selManualNow ? `
-        <div class="p-3 rounded-xl bg-indigo-600 text-white flex flex-wrap items-center justify-between gap-2 shadow-sm">
-          <div class="text-xs font-bold flex items-center gap-2">
-            <span>🔗 Modo Associação Manual Ativo:</span>
-            <span class="px-2 py-0.5 rounded bg-white/20 font-mono">
-              ${selManualNow.side === 'SYS'
-                ? `Coleta selecionada (${selManualNow.time} · ${selManualNow.vol} vol · ${selManualNow.kg.toFixed(1)} kg DRE)`
-                : `Pesagem selecionada (${selManualNow.time} · ${selManualNow.vol} vol · ${selManualNow.kg.toFixed(1)} kg Balança)`}
-            </span>
-            <span>→ Agora clique ${selManualNow.side === 'SYS' ? 'na <b>Pesagem (App)</b>' : 'na <b>Coleta (Sistema)</b>'} correspondente abaixo para vincular!</span>
+      let manualSelectionBannerHtml = '';
+      if (draftBanner) {
+        const dSysVol = draftBanner.sysItems.reduce((a, x) => a + x.vol, 0);
+        const dSysKg = draftBanner.sysItems.reduce((a, x) => a + x.kg, 0);
+        const dSysTimes = Array.from(new Set(draftBanner.sysItems.map(x => x.time))).join(' + ');
+        const dAppVol = draftBanner.appEntries.reduce((a, x) => a + x.vol, 0);
+        const dAppKg = draftBanner.appEntries.reduce((a, x) => a + x.kg, 0);
+        const dAppTimes = Array.from(new Set(draftBanner.appEntries.map(x => x.time))).join(' + ');
+        const canCommitNow = draftBanner.sysItems.length > 0 && draftBanner.appEntries.length > 0;
+
+        manualSelectionBannerHtml = `
+          <div class="sticky top-0 z-20 p-3 rounded-xl bg-indigo-600 text-white flex flex-wrap items-center justify-between gap-2.5 shadow-md">
+            <div class="text-xs font-bold flex items-center gap-2 flex-wrap">
+              <span>🔗 Associação Manual Múltipla:</span>
+              <span class="px-2.5 py-0.5 rounded-lg bg-white/20 font-mono">
+                Coletas: ${draftBanner.sysItems.length > 0 ? `${dSysVol} vol (${dSysTimes} · ${dSysKg.toFixed(1)} kg)` : '0 selecionadas'}
+              </span>
+              <span>↔</span>
+              <span class="px-2.5 py-0.5 rounded-lg bg-white/20 font-mono">
+                Pesagens: ${draftBanner.appEntries.length > 0 ? `${dAppVol} vol (${dAppTimes} · ${dAppKg.toFixed(1)} kg)` : '0 selecionadas'}
+              </span>
+              <span class="text-indigo-100 font-normal">
+                ${!canCommitNow
+                  ? (draftBanner.sysItems.length > 0 ? '→ Clique em mais Coletas p/ somar ou clique na(s) Pesagem(ns) correspondente(s)!' : '→ Clique em mais Pesagens p/ somar ou clique na(s) Coleta(s) correspondente(s)!')
+                  : `→ Clique em mais itens p/ igualar os volumes (${dSysVol} vs ${dAppVol}) ou confirme ao lado:`}
+              </span>
+            </div>
+            <div class="flex items-center gap-2">
+              ${canCommitNow ? `
+                <button type="button" onclick="commitChronoManualDraft('${blockId}')" class="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-[11px] shadow-xs transition">
+                  ✓ Confirmar Associação (${dSysVol} vol ↔ ${dAppVol} vol)
+                </button>
+              ` : ''}
+              <button type="button" onclick="cancelChronoManualSelection()" class="px-2.5 py-1 rounded-lg bg-white text-indigo-700 font-extrabold text-[11px] hover:bg-indigo-50 transition">
+                ✕ Cancelar
+              </button>
+            </div>
           </div>
-          <button type="button" onclick="cancelChronoManualSelection()" class="px-2.5 py-1 rounded-lg bg-white text-indigo-700 font-extrabold text-[11px] hover:bg-indigo-50 transition">
-            ✕ Cancelar Seleção
-          </button>
-        </div>
-      ` : `
-        <div class="px-3.5 py-2 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-indigo-900 dark:text-indigo-200">
-          <span>🔗 <b>Associação Manual Direta:</b> Clique em qualquer card de <b>Pesagem (App)</b> e depois na <b>Coleta (Sistema)</b> correspondente (ou vice-versa) para associar cargas pesadas e coletadas em horários diferentes.</span>
-          ${manualLinksBlock.length > 0 ? `<span class="px-2 py-0.5 rounded-full bg-indigo-600 text-white font-bold text-[10px]">${manualLinksBlock.length} associação(ões) manual(is) ativa(s)</span>` : ''}
-        </div>
-      `;
+        `;
+      } else {
+        manualSelectionBannerHtml = `
+          <div class="px-3.5 py-2 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-2 text-[11px] text-indigo-900 dark:text-indigo-200">
+            <span>🔗 <b>Associação Manual (1 para Vários ou Vários para 1):</b> Clique em uma <b>Pesagem (ex: 2 vol)</b> e depois clique nas <b>Coletas (ex: 2 coletas de 1 vol)</b> — ou vice-versa! Quando a soma de volumes bater, o vínculo fecha sozinho (ou você pode clicar em <b>＋ Adicionar + Coleta / Pesagem</b> numa associação já criada).</span>
+            ${manualLinksBlock.length > 0 ? `<span class="px-2 py-0.5 rounded-full bg-indigo-600 text-white font-bold text-[10px]">${manualLinksBlock.length} associação(ões) manual(is) ativa(s)</span>` : ''}
+          </div>
+        `;
+      }
 
       container.innerHTML = `
         <div class="space-y-4">
