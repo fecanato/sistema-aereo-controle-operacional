@@ -182,8 +182,15 @@
       <h1 class="text-3xl font-extrabold text-slate-900 dark:text-white">Quem está operando?</h1>
       <p class="text-sm text-slate-500 dark:text-slate-400 mt-2">Selecione seu nome para acessar o controle operacional</p>
     </div>
-    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm">
+    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm space-y-4">
       <div id="ctrlUsersList" class="flex flex-col divide-y divide-slate-200 dark:divide-slate-700"></div>
+      <div class="pt-3 border-t border-slate-200/80 dark:border-slate-700/80">
+        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-purple-600/20 dark:hover:bg-purple-600/30 text-white dark:text-purple-200 border border-slate-800 dark:border-purple-500/40 font-bold text-xs sm:text-sm transition shadow-sm flex items-center justify-center gap-2">
+          <span>🔐</span>
+          <span>Entrar com Face ID / Digital (Chave de Acesso)</span>
+        </button>
+        <p class="text-[11px] text-center text-slate-400 dark:text-slate-500 mt-2">Sessão inteligente ativa por 2 horas após o login</p>
+      </div>
     </div>
   </section>
 
@@ -201,19 +208,27 @@
         <button type="button" onclick="closeCtrlAuthModal()" class="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition" title="Fechar">✕</button>
       </div>
 
-      <!-- STEP A: LOGIN COM SENHA -->
+      <!-- STEP A: LOGIN COM SENHA OU FACE ID / BIOMETRIA -->
       <div id="ctrlAuthStepLogin" class="p-6 space-y-4">
         <div id="ctrlAuthLoginFeedback" class="hidden p-3.5 rounded-xl text-xs font-bold leading-relaxed"></div>
+        <button type="button" id="ctrlBtnBiometriaModal" onclick="loginCtrlSelectedUserWithBiometrics()" class="w-full py-3 px-4 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/15 dark:hover:bg-purple-500/25 text-purple-700 dark:text-purple-200 border border-purple-200 dark:border-purple-500/40 font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-xs">
+          <span>🔐</span>
+          <span id="ctrlBtnBiometriaModalText">Entrar com Face ID / Digital</span>
+        </button>
         <div>
-          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Digite sua senha de acesso</label>
+          <label class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Ou digite sua senha de acesso</label>
           <div class="relative">
-            <input type="password" id="ctrlAuthInputSenha" onkeydown="if(event.key==='Enter') submitCtrlLoginPassword()" placeholder="••••••••" class="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 pr-10" />
+            <input type="password" id="ctrlAuthInputSenha" onkeydown="if(event.key==='Enter') submitCtrlLoginPassword(false)" placeholder="••••••••" class="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 pr-10" />
             <button type="button" onclick="toggleCtrlPassVisibility('ctrlAuthInputSenha')" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold">👁</button>
           </div>
         </div>
-        <div class="pt-1 flex flex-col gap-2.5">
-          <button type="button" onclick="submitCtrlLoginPassword()" class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm transition shadow-sm flex items-center justify-center gap-2">
+        <div class="pt-1 flex flex-col gap-2">
+          <button type="button" onclick="submitCtrlLoginPassword(false)" class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm transition shadow-sm flex items-center justify-center gap-2">
             <span>Entrar no Sistema</span> <span>→</span>
+          </button>
+          <button type="button" onclick="submitCtrlLoginPassword(true)" class="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-700/70 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold text-xs transition flex items-center justify-center gap-1.5">
+            <span>🔐</span>
+            <span>Validar Senha + Ativar Face ID / Digital neste aparelho</span>
           </button>
           <button type="button" onclick="triggerCtrlForgotPassEmail()" class="w-full py-2 rounded-xl text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-500/10 font-bold text-xs transition">
             Esqueci a senha
@@ -1676,12 +1691,336 @@
                   ctrlOperadores = ctrlOperadores.filter(op => op !== nome);
                   continue;
                 }
+
+    // =========================================================================
+    // SESSÃO INTELIGENTE DE 2 HORAS + BIOMETRIA GRATUITA (WEBAUTHN PASSKEYS: FACE ID / DIGITAL)
+    // =========================================================================
+    const SA_SESSION_STORAGE_KEY = 'sistema_aereo_sessao_2h_v2';
+    const SA_PASSKEYS_LOCAL_KEY = 'sistema_aereo_passkeys_v1';
+    const SA_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 horas (7.200.000 ms)
+    let _saLastActivityWriteTs = 0;
+
+    function saBufferToBase64Url(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+
+    function saBase64UrlToUint8Array(base64url) {
+      const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
+      const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+      return outputArray;
+    }
+
+    function saMergePasskeysList(listA, listB) {
+      const map = new Map();
+      const addAll = (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (const item of arr) {
+          if (item && item.id && typeof item.id === 'string') {
+            map.set(item.id, {
+              id: item.id,
+              usuario: String(item.usuario || '').trim().toUpperCase(),
+              apelido: String(item.apelido || 'Aparelho'),
+              criado_em: Number(item.criado_em || Date.now())
+            });
+          }
+        }
+      };
+      addAll(listA);
+      addAll(listB);
+      return Array.from(map.values());
+    }
+
+    function saLerPasskeysLocaisMap() {
+      try {
+        const raw = localStorage.getItem(SA_PASSKEYS_LOCAL_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch (e) {}
+      return {};
+    }
+
+    function saSalvarPasskeyLocal(entry) {
+      if (!entry || !entry.id) return;
+      const map = saLerPasskeysLocaisMap();
+      map[entry.id] = entry;
+      try {
+        localStorage.setItem(SA_PASSKEYS_LOCAL_KEY, JSON.stringify(map));
+      } catch (e) {}
+    }
+
+    function saObterPasskeysUsuario(nomeUsuario, authDbObj) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) return [];
+      const fromDb = (authDbObj && authDbObj[nomeUp] && Array.isArray(authDbObj[nomeUp].passkeys))
+        ? authDbObj[nomeUp].passkeys
+        : [];
+      const localMap = saLerPasskeysLocaisMap();
+      const fromLocal = Object.values(localMap).filter(p => p && String(p.usuario || '').trim().toUpperCase() === nomeUp);
+      return saMergePasskeysList(fromDb, fromLocal);
+    }
+
+    function saObterTodasPasskeysConhecidas(authDbObj) {
+      let todas = Object.values(saLerPasskeysLocaisMap());
+      if (authDbObj && typeof authDbObj === 'object') {
+        for (const [k, v] of Object.entries(authDbObj)) {
+          if (v && !v.excluido && Array.isArray(v.passkeys)) {
+            const uName = String(k || v.nome || '').trim().toUpperCase();
+            const norm = v.passkeys.map(p => ({ ...p, usuario: p.usuario || uName }));
+            todas = saMergePasskeysList(todas, norm);
+          }
+        }
+      }
+      return todas;
+    }
+
+    function saWebAuthnDisponivel() {
+      return Boolean(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+    }
+
+    async function saCadastrarBiometriaPasskey(nomeUsuario, authDbObj, saveAndSyncCallback) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) throw new Error('Selecione um operador válido.');
+      if (!saWebAuthnDisponivel()) {
+        throw new Error('O Face ID / Biometria requer abrir o sistema diretamente via link seguro (HTTPS ou localhost).');
+      }
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+      const userIdBytes = new TextEncoder().encode('FEDEX_AEREO_' + nomeUp);
+      const existing = saObterPasskeysUsuario(nomeUp, authDbObj);
+      const excludeCredentials = existing.map(p => {
+        try {
+          return { id: saBase64UrlToUint8Array(p.id), type: 'public-key' };
+        } catch (e) { return null; }
+      }).filter(Boolean);
+
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      const apelidoAparelho = isIOS ? 'iPhone / iPad (Face ID / Touch ID)' : (isAndroid ? 'Android (Biometria / Digital)' : 'Computador (Windows Hello / Touch ID)');
+
+      const createOptions = {
+        publicKey: {
+          challenge,
+          rp: { name: 'Sistema Aéreo FedEx Linehaul' },
+          user: {
+            id: userIdBytes,
+            name: nomeUp.toLowerCase() + '@fedex.linehaul',
+            displayName: nomeUp
+          },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 }
+          ],
+          authenticatorSelection: {
+            userVerification: 'required',
+            residentKey: 'preferred',
+            requireResidentKey: false
+          },
+          timeout: 60000,
+          attestation: 'none'
+        }
+      };
+
+      const cred = await navigator.credentials.create(createOptions);
+      if (!cred || !cred.rawId) throw new Error('Não foi possível criar a chave de acesso biométrica.');
+
+      const credId = saBufferToBase64Url(cred.rawId);
+      const novaEntry = {
+        id: credId,
+        usuario: nomeUp,
+        apelido: apelidoAparelho,
+        criado_em: Date.now()
+      };
+
+      saSalvarPasskeyLocal(novaEntry);
+      if (authDbObj && typeof authDbObj === 'object') {
+        if (!authDbObj[nomeUp]) authDbObj[nomeUp] = { nome: nomeUp, senha: '', email: '' };
+        authDbObj[nomeUp].passkeys = saMergePasskeysList(authDbObj[nomeUp].passkeys, [novaEntry]);
+        authDbObj[nomeUp].atualizado_em = Date.now();
+      }
+      if (typeof saveAndSyncCallback === 'function') {
+        await saveAndSyncCallback();
+      }
+      return novaEntry;
+    }
+
+    async function saAutenticarBiometriaPasskey(nomeOpcional, authDbObj) {
+      if (!saWebAuthnDisponivel()) {
+        throw new Error('O Face ID / Biometria requer abrir o sistema diretamente via link seguro (HTTPS ou localhost).');
+      }
+      const nomeAlvo = nomeOpcional ? String(nomeOpcional).trim().toUpperCase() : '';
+      const listaPasskeys = nomeAlvo
+        ? saObterPasskeysUsuario(nomeAlvo, authDbObj)
+        : saObterTodasPasskeysConhecidas(authDbObj);
+
+      const allowCredentials = listaPasskeys.map(p => {
+        try {
+          return { id: saBase64UrlToUint8Array(p.id), type: 'public-key' };
+        } catch (e) { return null; }
+      }).filter(Boolean);
+
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+
+      const getOptions = {
+        publicKey: {
+          challenge,
+          userVerification: 'required',
+          timeout: 60000
+        }
+      };
+      if (allowCredentials.length > 0) {
+        getOptions.publicKey.allowCredentials = allowCredentials;
+      }
+
+      const assertion = await navigator.credentials.get(getOptions);
+      if (!assertion || !assertion.rawId) {
+        throw new Error('Autenticação biométrica não concluída.');
+      }
+
+      const credId = saBufferToBase64Url(assertion.rawId);
+      const todas = saObterTodasPasskeysConhecidas(authDbObj);
+      let encontrado = todas.find(p => p.id === credId)?.usuario || '';
+
+      if (!encontrado && assertion.response && assertion.response.userHandle) {
+        try {
+          const handleTxt = new TextDecoder().decode(assertion.response.userHandle);
+          if (handleTxt && handleTxt.startsWith('FEDEX_AEREO_')) {
+            encontrado = handleTxt.replace('FEDEX_AEREO_', '').trim().toUpperCase();
+          }
+        } catch (e) {}
+      }
+      if (!encontrado && nomeAlvo) {
+        encontrado = nomeAlvo;
+      }
+      if (!encontrado) {
+        throw new Error('Chave biométrica reconhecida, mas ainda não vinculada a um operador neste navegador. Entre uma vez com sua senha e clique em "Ativar Face ID / Biometria".');
+      }
+      if (authDbObj && authDbObj[encontrado] && authDbObj[encontrado].excluido === true) {
+        throw new Error('Este usuário foi removido do sistema.');
+      }
+      // Garante que a passkey fique salva também no cache local deste aparelho
+      saSalvarPasskeyLocal({ id: credId, usuario: encontrado, apelido: 'Aparelho Autenticado', criado_em: Date.now() });
+      return { ok: true, usuario: encontrado, credId };
+    }
+
+    function saSalvarSessao2h(nomeUsuario) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) return;
+      const agora = Date.now();
+      const payload = {
+        usuario: nomeUp,
+        login_em: agora,
+        ultimo_acesso: agora,
+        ttl_ms: SA_SESSION_TTL_MS
+      };
+      _saLastActivityWriteTs = agora;
+      try {
+        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
+        localStorage.setItem('sistema_aereo_usuario', nomeUp);
+        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    }
+
+    function saEncerrarSessao2h() {
+      try {
+        localStorage.removeItem(SA_SESSION_STORAGE_KEY);
+        localStorage.removeItem('sistema_aereo_usuario');
+        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
+        localStorage.removeItem('peso-equipe-user');
+        sessionStorage.removeItem(SA_SESSION_STORAGE_KEY);
+      } catch (e) {}
+    }
+
+    function saLerSessaoValida2h(authDbObj) {
+      try {
+        const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY) || sessionStorage.getItem(SA_SESSION_STORAGE_KEY);
+        if (!raw) return null;
+        const sess = JSON.parse(raw);
+        if (!sess || !sess.usuario) return null;
+        const nomeUp = String(sess.usuario).trim().toUpperCase();
+        if (!nomeUp) return null;
+        if (authDbObj && authDbObj[nomeUp] && authDbObj[nomeUp].excluido === true) {
+          saEncerrarSessao2h();
+          return null;
+        }
+        const ultimo = Number(sess.ultimo_acesso || sess.login_em || 0);
+        const agora = Date.now();
+        if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
+          saEncerrarSessao2h();
+          return null;
+        }
+        // Renova o timestamp de último acesso dentro da janela de 2h
+        sess.ultimo_acesso = agora;
+        _saLastActivityWriteTs = agora;
+        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+        localStorage.setItem('sistema_aereo_usuario', nomeUp);
+        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+        return nomeUp;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function saRegistrarMonitorAtividadeSessao2h(getCurrentUserFn, onExpiredLogoutFn) {
+      const checkOrTouch = (isUserAction) => {
+        const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
+        if (!uAtual) return;
+        try {
+          const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY);
+          if (!raw) {
+            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
+            return;
+          }
+          const sess = JSON.parse(raw);
+          const ultimo = Number(sess?.ultimo_acesso || sess?.login_em || 0);
+          const agora = Date.now();
+          if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
+            saEncerrarSessao2h();
+            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(true);
+            return;
+          }
+          if (isUserAction && (agora - _saLastActivityWriteTs) >= 20000) {
+            sess.ultimo_acesso = agora;
+            _saLastActivityWriteTs = agora;
+            localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+            sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+          }
+        } catch (e) {}
+      };
+
+      ['pointerdown', 'keydown', 'touchstart'].forEach(evt => {
+        window.addEventListener(evt, () => checkOrTouch(true), { passive: true });
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) checkOrTouch(false);
+      });
+      window.addEventListener('focus', () => checkOrTouch(false));
+      window.addEventListener('storage', (ev) => {
+        if (ev.key === SA_SESSION_STORAGE_KEY && !ev.newValue) {
+          const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
+          if (uAtual && typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
+        }
+      });
+      setInterval(() => {
+        if (!document.hidden) checkOrTouch(false);
+      }, 45000);
+    }
+
                 const loc = ctrlUsuariosAuthDb[nome] || {};
                 const defEmail = CTRL_DEFAULT_FEDEX_EMAILS[nome] || '';
                 ctrlUsuariosAuthDb[nome] = {
                   nome,
                   senha: (v && v.senha !== undefined) ? String(v.senha || '') : String(loc.senha || ''),
                   email: (v && v.email && String(v.email).trim() !== '') ? String(v.email).trim().toLowerCase() : String(loc.email || defEmail),
+                  passkeys: saMergePasskeysList(loc.passkeys, v?.passkeys),
                   atualizado_em: v?.atualizado_em || loc.atualizado_em || Date.now()
                 };
                 if (!ctrlOperadores.includes(nome)) {
@@ -1746,9 +2085,10 @@
         const ini = nome.slice(0, 2);
         const uAuth = ctrlUsuariosAuthDb[nome] || {};
         const temSenha = Boolean(uAuth.senha && String(uAuth.senha).trim().length > 0);
-        const badge = temSenha
-          ? ''
-          : `<span class="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold">1º Acesso</span>`;
+        const temBio = saObterPasskeysUsuario(nome, ctrlUsuariosAuthDb).length > 0;
+        const badge = !temSenha
+          ? `<span class="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 text-[10px] font-bold">1º Acesso</span>`
+          : (temBio ? `<span class="inline-block mt-0.5 px-2 py-0.5 rounded-full bg-purple-500/15 text-purple-600 dark:text-purple-300 text-[10px] font-bold">🔐 Face ID / Biometria</span>` : '');
         return `
           <button type="button" onclick="selectCtrlUserLogin('${nome}')" class="w-full py-4 px-1 flex items-center justify-between hover:bg-slate-50/70 dark:hover:bg-slate-700/30 transition group text-left">
             <div class="flex items-center gap-3.5">
@@ -1864,10 +2204,12 @@
         return;
       }
 
+      const prevPasskeys = ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal]?.passkeys || [];
       ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal] = {
         nome: ctrlUsuarioSelecionadoModal,
         senha: s1,
         email: emInput || ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal]?.email || defEmail,
+        passkeys: prevPasskeys,
         atualizado_em: Date.now()
       };
       const nomeLogar = ctrlUsuarioSelecionadoModal;
@@ -1877,21 +2219,62 @@
       showToast(`Senha cadastrada! Bem-vindo, ${nomeLogar}!`);
     };
 
-    window.submitCtrlLoginPassword = function() {
+    window.submitCtrlLoginPassword = async function(ativarBiometria = false) {
       if (!ctrlUsuarioSelecionadoModal) return;
       const dig = (document.getElementById('ctrlAuthInputSenha')?.value || '').trim();
-      const uAuth = ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal];
+      let uAuth = ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal];
       if (!dig) {
         showCtrlAuthFeedback('ctrlAuthLoginFeedback', 'Digite sua senha para entrar.');
         return;
+      }
+      if (!uAuth || String(uAuth.senha).trim() !== dig) {
+        await syncCtrlGlobalAuthFromSupabase();
+        uAuth = ctrlUsuariosAuthDb[ctrlUsuarioSelecionadoModal];
       }
       if (!uAuth || String(uAuth.senha).trim() !== dig) {
         showCtrlAuthFeedback('ctrlAuthLoginFeedback', 'Senha incorreta. Tente novamente ou clique em Esqueci a senha.');
         return;
       }
       const nomeLogar = ctrlUsuarioSelecionadoModal;
+      if (ativarBiometria) {
+        try {
+          await saCadastrarBiometriaPasskey(nomeLogar, ctrlUsuariosAuthDb, pushCtrlGlobalAuthToSupabase);
+          showToast(`🔐 Face ID / Biometria ativado para ${nomeLogar}!`);
+        } catch (err) {
+          showToast(err?.message || 'Não foi possível ativar a biometria agora, mas o login foi realizado.');
+        }
+      }
       closeCtrlAuthModal();
       completeCtrlAuthenticatedLogin(nomeLogar);
+    };
+
+    window.loginCtrlSelectedUserWithBiometrics = async function() {
+      if (!ctrlUsuarioSelecionadoModal) return;
+      try {
+        const res = await saAutenticarBiometriaPasskey(ctrlUsuarioSelecionadoModal, ctrlUsuariosAuthDb);
+        if (res && res.ok && res.usuario) {
+          closeCtrlAuthModal();
+          completeCtrlAuthenticatedLogin(res.usuario);
+          showToast(`🔐 Autenticado via Face ID / Biometria (${res.usuario})!`);
+        }
+      } catch (err) {
+        showCtrlAuthFeedback('ctrlAuthLoginFeedback', err?.message || 'Biometria cancelada ou ainda não ativada neste aparelho. Digite sua senha abaixo e toque em "Validar Senha + Ativar Face ID / Digital".');
+      }
+    };
+
+    window.loginCtrlWithBiometricsDirect = async function() {
+      try {
+        await syncCtrlGlobalAuthFromSupabase();
+      } catch (e) {}
+      try {
+        const res = await saAutenticarBiometriaPasskey('', ctrlUsuariosAuthDb);
+        if (res && res.ok && res.usuario) {
+          completeCtrlAuthenticatedLogin(res.usuario);
+          showToast(`🔐 Bem-vindo de volta, ${res.usuario}!`);
+        }
+      } catch (err) {
+        showToast(err?.message || 'Selecione seu nome para entrar com senha e ativar o Face ID / Biometria neste aparelho.');
+      }
     };
 
     window.triggerCtrlForgotPassEmail = function() {
@@ -1933,10 +2316,7 @@
       const nomeUp = String(nome || '').trim().toUpperCase();
       ctrlUsuarioLogado = nomeUp;
       window._ctrlSessionAuthenticatedUser = nomeUp;
-      try {
-        localStorage.setItem('sistema_aereo_usuario', nomeUp);
-        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
-      } catch (e) {}
+      saSalvarSessao2h(nomeUp);
       const hdrName = document.getElementById('ctrlHeaderUserName');
       if (hdrName) hdrName.textContent = nomeUp;
       const opsName = document.getElementById('ctrlOpsUserName');
@@ -1949,13 +2329,14 @@
       goToOperationsScreen();
     }
 
-    window.logoutCtrlOperacional = function() {
+    window.logoutCtrlOperacional = function(expirouPorInatividade = false) {
       ctrlUsuarioLogado = null;
-      try {
-        localStorage.removeItem('sistema_aereo_usuario');
-        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
-      } catch (e) {}
+      window._ctrlSessionAuthenticatedUser = null;
+      saEncerrarSessao2h();
       goToLoginScreenCtrl();
+      if (expirouPorInatividade === true) {
+        showToast('⏱️ Sua sessão de 2 horas expirou. Faça login novamente.');
+      }
     };
 
     function goToOperationsScreen() {
@@ -15894,12 +16275,18 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       loadCtrlGlobalAuthFromStorage();
       loadCatalogFromStorage();
 
-      try {
-        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
-      } catch (e) {}
-      ctrlUsuarioLogado = null;
-      window._ctrlSessionAuthenticatedUser = null;
-      goToLoginScreenCtrl();
+      saRegistrarMonitorAtividadeSessao2h(
+        () => ctrlUsuarioLogado,
+        (expirou) => window.logoutCtrlOperacional(expirou)
+      );
+      const sessaoValida2h = saLerSessaoValida2h(ctrlUsuariosAuthDb);
+      if (sessaoValida2h) {
+        completeCtrlAuthenticatedLogin(sessaoValida2h);
+      } else {
+        ctrlUsuarioLogado = null;
+        window._ctrlSessionAuthenticatedUser = null;
+        goToLoginScreenCtrl();
+      }
 
       syncCtrlGlobalAuthFromSupabase();
       initSupabaseRealtime();
