@@ -176,21 +176,54 @@
   <!-- ===================================================================== -->
   <!-- SCREEN 0: TELA DE LOGIN PADRONIZADA (TEMA ROXO DO CONTROLE OPERACIONAL) -->
   <!-- ===================================================================== -->
-  <section id="screenLogin" class="flex-1 max-w-md w-full mx-auto px-4 mt-10 py-6 space-y-6">
+  <section id="screenLogin" class="flex-1 max-w-md w-full mx-auto px-4 mt-8 py-6 space-y-5">
     <div>
-      <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">ACESSO AO SISTEMA</h2>
-      <h1 class="text-3xl font-extrabold text-slate-900 dark:text-white">Quem está operando?</h1>
-      <p class="text-sm text-slate-500 dark:text-slate-400 mt-2">Selecione seu nome para acessar o controle operacional</p>
+      <h2 class="text-xs font-bold text-purple-600 dark:text-purple-400 uppercase tracking-wider mb-1.5">ACESSO AO SISTEMA</h2>
+      <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">Controle Operacional</h1>
+      <p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">Digite seu ID FedEx e sua senha cadastrada para entrar</p>
     </div>
-    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-6 shadow-sm space-y-4">
-      <div id="ctrlUsersList" class="flex flex-col divide-y divide-slate-200 dark:divide-slate-700"></div>
-      <div class="pt-3 border-t border-slate-200/80 dark:border-slate-700/80">
-        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-3 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-purple-600/20 dark:hover:bg-purple-600/30 text-white dark:text-purple-200 border border-slate-800 dark:border-purple-500/40 font-bold text-xs sm:text-sm transition shadow-sm flex items-center justify-center gap-2">
-          <span>🔐</span>
-          <span>Entrar com Face ID / Digital (Chave de Acesso)</span>
-        </button>
-        <p class="text-[11px] text-center text-slate-400 dark:text-slate-500 mt-2">Sessão inteligente ativa por 2 horas após o login</p>
+    <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5 sm:p-6 shadow-sm space-y-4">
+      <div id="ctrlDirectLoginFeedback" class="hidden p-3.5 rounded-xl text-xs font-bold leading-relaxed"></div>
+
+      <div>
+        <label for="ctrlDirectInputUser" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Usuário (ID FedEx)</label>
+        <input type="text" id="ctrlDirectInputUser" autocomplete="username webauthn" onkeydown="if(event.key==='Enter') document.getElementById('ctrlDirectInputPass')?.focus()" placeholder="Digite seu ID FedEx (ex: 8953406)" class="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500" />
       </div>
+
+      <div>
+        <label for="ctrlDirectInputPass" class="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">Senha</label>
+        <div class="relative">
+          <input type="password" id="ctrlDirectInputPass" autocomplete="current-password" onkeydown="if(event.key==='Enter') submitCtrlStandardLogin(false)" placeholder="••••••••" class="w-full px-4 py-3 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-sm font-bold focus:outline-none focus:ring-2 focus:ring-purple-500 pr-10" />
+          <button type="button" onclick="toggleCtrlPassVisibility('ctrlDirectInputPass')" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xs font-bold" title="Mostrar/Ocultar senha">👁</button>
+        </div>
+      </div>
+
+      <div class="pt-1 flex flex-col gap-2">
+        <button type="button" onclick="submitCtrlStandardLogin(false)" class="w-full py-3 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-sm transition shadow-sm flex items-center justify-center gap-2">
+          <span>Entrar no Sistema</span> <span>→</span>
+        </button>
+        <button type="button" onclick="triggerCtrlStandardForgotPassword()" class="w-full py-2 rounded-xl text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-500/10 font-bold text-xs transition">
+          Esqueci a senha
+        </button>
+      </div>
+
+      <div class="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-2.5">
+        <span class="block text-[10px] font-bold uppercase tracking-wider text-center text-slate-400 dark:text-slate-500">Acesso Rápido sem Senha</span>
+        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-2.5 px-4 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/15 dark:hover:bg-purple-500/25 text-purple-700 dark:text-purple-200 border border-purple-200 dark:border-purple-500/40 font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-2">
+          <span>🔐</span>
+          <span>Entrar com Face ID / Biometria</span>
+        </button>
+        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700/80 dark:hover:bg-slate-700 text-white dark:text-slate-100 border border-slate-800 dark:border-slate-600 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2">
+          <span>🔑</span>
+          <span>Entrar com Chave de Acesso (Windows / PIN)</span>
+        </button>
+        <button type="button" onclick="submitCtrlStandardLogin(true)" class="w-full py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-bold text-[11px] transition flex items-center justify-center gap-1.5">
+          <span>➕</span>
+          <span>Criar / Vincular Chave de Acesso ou Face ID neste aparelho</span>
+        </button>
+        <p class="text-[11px] text-center text-slate-400 dark:text-slate-500 pt-1">Sessão inteligente ativa por 2 horas após o login</p>
+      </div>
+      <div id="ctrlUsersList" class="hidden"></div>
     </div>
   </section>
 
@@ -1619,6 +1652,409 @@
       'KAIO': 'josesilva3@fedex.com'
     };
 
+
+    // =========================================================================
+    // SESSÃO INTELIGENTE DE 2 HORAS + LOGIN ID FEDEX + BIOMETRIA / CHAVE DE ACESSO WINDOWS (WEBAUTHN)
+    // =========================================================================
+    const SA_SESSION_STORAGE_KEY = 'sistema_aereo_sessao_2h_v2';
+    const SA_PASSKEYS_LOCAL_KEY = 'sistema_aereo_passkeys_v1';
+    const SA_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 horas (7.200.000 ms)
+    const SA_DEFAULT_FEDEX_IDS = {
+      'FELIPE': '8953406',
+      'KAIO': '2575760',
+      'JAQUELINE': '3853831'
+    };
+    const SA_DEFAULT_FEDEX_IDS_REVERSE = {
+      '8953406': 'FELIPE',
+      '2575760': 'KAIO',
+      '3853831': 'JAQUELINE'
+    };
+    window.SA_DEFAULT_FEDEX_IDS = SA_DEFAULT_FEDEX_IDS;
+    window.SA_DEFAULT_FEDEX_IDS_REVERSE = SA_DEFAULT_FEDEX_IDS_REVERSE;
+    let _saLastActivityWriteTs = 0;
+
+    window.saObterFedexIdPadrao = function(nomeUsuario, authDbObj) {
+      const n = String(nomeUsuario || '').trim().toUpperCase();
+      if (!n) return '';
+      if (authDbObj && authDbObj[n] && authDbObj[n].fedex_id) {
+        return String(authDbObj[n].fedex_id).trim();
+      }
+      return SA_DEFAULT_FEDEX_IDS[n] || '';
+    };
+
+    window.saResolverUsuarioPorLoginInput = function(rawInput, authDbObj, listaOperadores) {
+      const limpo = String(rawInput || '').trim();
+      if (!limpo) return null;
+      const limpoUp = limpo.toUpperCase();
+      const limpoDigits = limpo.replace(/\D/g, '');
+
+      // 1) Busca pelo ID FedEx cadastrado no banco/objeto de usuários
+      if (authDbObj && typeof authDbObj === 'object') {
+        for (const [k, v] of Object.entries(authDbObj)) {
+          if (!v || v.excluido === true) continue;
+          const nomeOp = String(k || v.nome || '').trim().toUpperCase();
+          const fid = String(v.fedex_id || SA_DEFAULT_FEDEX_IDS[nomeOp] || '').trim();
+          if (fid && (fid.toUpperCase() === limpoUp || (limpoDigits && fid === limpoDigits))) {
+            return nomeOp;
+          }
+        }
+      }
+
+      // 2) Busca no mapa padrão de IDs FedEx (8953406 -> FELIPE, 2575760 -> KAIO, 3853831 -> JAQUELINE)
+      if (SA_DEFAULT_FEDEX_IDS_REVERSE[limpoUp]) {
+        const cand = SA_DEFAULT_FEDEX_IDS_REVERSE[limpoUp];
+        if (!(authDbObj && authDbObj[cand] && authDbObj[cand].excluido === true)) return cand;
+      }
+      if (limpoDigits && SA_DEFAULT_FEDEX_IDS_REVERSE[limpoDigits]) {
+        const cand = SA_DEFAULT_FEDEX_IDS_REVERSE[limpoDigits];
+        if (!(authDbObj && authDbObj[cand] && authDbObj[cand].excluido === true)) return cand;
+      }
+
+      // 3) Fallback caso digite o próprio nome (ex: FELIPE, KAIO, JAQUELINE)
+      if (authDbObj && authDbObj[limpoUp] && authDbObj[limpoUp].excluido !== true) {
+        return limpoUp;
+      }
+      if (Array.isArray(listaOperadores)) {
+        const achou = listaOperadores.find(op => String(op || '').trim().toUpperCase() === limpoUp);
+        if (achou) return String(achou).trim().toUpperCase();
+      }
+      return null;
+    };
+
+    window.saBufferToBase64Url = function(buffer) {
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    };
+
+    window.saBase64UrlToUint8Array = function(base64url) {
+      const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
+      const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+      const rawData = atob(base64);
+      const outputArray = new Uint8Array(rawData.length);
+      for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
+      return outputArray;
+    };
+
+    window.saMergePasskeysList = function(listA, listB) {
+      const map = new Map();
+      const addAll = (arr) => {
+        if (!Array.isArray(arr)) return;
+        for (const item of arr) {
+          if (item && item.id && typeof item.id === 'string') {
+            const uName = String(item.usuario || '').trim().toUpperCase();
+            map.set(item.id, {
+              id: item.id,
+              usuario: uName,
+              fedex_id: String(item.fedex_id || SA_DEFAULT_FEDEX_IDS[uName] || ''),
+              apelido: String(item.apelido || 'Aparelho'),
+              criado_em: Number(item.criado_em || Date.now())
+            });
+          }
+        }
+      };
+      addAll(listA);
+      addAll(listB);
+      return Array.from(map.values());
+    };
+
+    window.saLerPasskeysLocaisMap = function() {
+      try {
+        const raw = localStorage.getItem(SA_PASSKEYS_LOCAL_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch (e) {}
+      return {};
+    };
+
+    window.saSalvarPasskeyLocal = function(entry) {
+      if (!entry || !entry.id) return;
+      const map = window.saLerPasskeysLocaisMap();
+      map[entry.id] = entry;
+      try {
+        localStorage.setItem(SA_PASSKEYS_LOCAL_KEY, JSON.stringify(map));
+      } catch (e) {}
+    };
+
+    window.saObterPasskeysUsuario = function(nomeUsuario, authDbObj) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) return [];
+      const fromDb = (authDbObj && authDbObj[nomeUp] && Array.isArray(authDbObj[nomeUp].passkeys))
+        ? authDbObj[nomeUp].passkeys
+        : [];
+      const localMap = window.saLerPasskeysLocaisMap();
+      const fromLocal = Object.values(localMap).filter(p => p && String(p.usuario || '').trim().toUpperCase() === nomeUp);
+      return window.saMergePasskeysList(fromDb, fromLocal);
+    };
+
+    window.saObterTodasPasskeysConhecidas = function(authDbObj) {
+      let todas = Object.values(window.saLerPasskeysLocaisMap());
+      if (authDbObj && typeof authDbObj === 'object') {
+        for (const [k, v] of Object.entries(authDbObj)) {
+          if (v && !v.excluido && Array.isArray(v.passkeys)) {
+            const uName = String(k || v.nome || '').trim().toUpperCase();
+            const norm = v.passkeys.map(p => ({ ...p, usuario: p.usuario || uName, fedex_id: p.fedex_id || v.fedex_id || SA_DEFAULT_FEDEX_IDS[uName] || '' }));
+            todas = window.saMergePasskeysList(todas, norm);
+          }
+        }
+      }
+      return todas;
+    };
+
+    window.saWebAuthnDisponivel = function() {
+      return Boolean(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
+    };
+
+    window.saCadastrarBiometriaPasskey = async function(nomeUsuario, authDbObj, saveAndSyncCallback) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) throw new Error('Informe um usuário válido.');
+      if (!window.saWebAuthnDisponivel()) {
+        throw new Error('Para criar Face ID / Chave de Acesso, acesse o sistema pelo link direto em HTTPS (Netlify) ou localhost.');
+      }
+      const fedexId = window.saObterFedexIdPadrao(nomeUp, authDbObj) || nomeUp;
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+      const userIdBytes = new TextEncoder().encode('FEDEX_ID_' + fedexId + '_' + nomeUp);
+
+      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+      const isAndroid = /Android/i.test(navigator.userAgent);
+      const apelidoAparelho = isIOS
+        ? 'iPhone / iPad (Face ID / Touch ID)'
+        : (isAndroid ? 'Android (Biometria / Digital)' : 'Windows Hello / Chave de Acesso PC');
+
+      const createOptions = {
+        publicKey: {
+          challenge,
+          rp: { name: 'Sistema Aéreo FedEx Linehaul' },
+          user: {
+            id: userIdBytes,
+            name: fedexId + ' (' + nomeUp + ')',
+            displayName: nomeUp + ' — ID FedEx ' + fedexId
+          },
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -257 }
+          ],
+          authenticatorSelection: {
+            userVerification: 'required',
+            residentKey: 'preferred',
+            requireResidentKey: false
+          },
+          timeout: 60000,
+          attestation: 'none'
+        }
+      };
+
+      const cred = await navigator.credentials.create(createOptions);
+      if (!cred || !cred.rawId) throw new Error('Criação da Chave de Acesso / Biometria não foi concluída.');
+
+      const credId = window.saBufferToBase64Url(cred.rawId);
+      const novaEntry = {
+        id: credId,
+        usuario: nomeUp,
+        fedex_id: fedexId,
+        apelido: apelidoAparelho,
+        criado_em: Date.now()
+      };
+
+      window.saSalvarPasskeyLocal(novaEntry);
+      if (authDbObj && typeof authDbObj === 'object') {
+        if (!authDbObj[nomeUp]) authDbObj[nomeUp] = { nome: nomeUp, fedex_id: fedexId, senha: '', email: '' };
+        if (!authDbObj[nomeUp].fedex_id) authDbObj[nomeUp].fedex_id = fedexId;
+        authDbObj[nomeUp].passkeys = window.saMergePasskeysList(authDbObj[nomeUp].passkeys, [novaEntry]);
+        authDbObj[nomeUp].atualizado_em = Date.now();
+      }
+      if (typeof saveAndSyncCallback === 'function') {
+        await saveAndSyncCallback();
+      }
+      return novaEntry;
+    };
+
+    window.saAutenticarBiometriaPasskey = async function(loginInputOpcional, authDbObj, listaOperadores) {
+      if (!window.saWebAuthnDisponivel()) {
+        throw new Error('O login por Face ID / Chave de Acesso requer abrir o sistema pelo link seguro HTTPS (Netlify) ou localhost.');
+      }
+      const nomeAlvo = loginInputOpcional
+        ? (window.saResolverUsuarioPorLoginInput(loginInputOpcional, authDbObj, listaOperadores) || String(loginInputOpcional).trim().toUpperCase())
+        : '';
+      const listaPasskeys = nomeAlvo
+        ? window.saObterPasskeysUsuario(nomeAlvo, authDbObj)
+        : window.saObterTodasPasskeysConhecidas(authDbObj);
+
+      const allowCredentials = listaPasskeys.map(p => {
+        try {
+          return { id: window.saBase64UrlToUint8Array(p.id), type: 'public-key' };
+        } catch (e) { return null; }
+      }).filter(Boolean);
+
+      const challenge = new Uint8Array(32);
+      crypto.getRandomValues(challenge);
+
+      const getOptions = {
+        publicKey: {
+          challenge,
+          userVerification: 'required',
+          timeout: 60000
+        }
+      };
+      if (allowCredentials.length > 0) {
+        getOptions.publicKey.allowCredentials = allowCredentials;
+      }
+
+      const assertion = await navigator.credentials.get(getOptions);
+      if (!assertion || !assertion.rawId) {
+        throw new Error('Autenticação não concluída.');
+      }
+
+      const credId = window.saBufferToBase64Url(assertion.rawId);
+      const todas = window.saObterTodasPasskeysConhecidas(authDbObj);
+      let encontrado = todas.find(p => p.id === credId)?.usuario || '';
+
+      if (!encontrado && assertion.response && assertion.response.userHandle) {
+        try {
+          const handleTxt = new TextDecoder().decode(assertion.response.userHandle);
+          if (handleTxt) {
+            if (handleTxt.startsWith('FEDEX_ID_')) {
+              const partes = handleTxt.replace('FEDEX_ID_', '').split('_');
+              const fid = partes[0] || '';
+              const nOp = partes.slice(1).join('_').trim().toUpperCase();
+              encontrado = nOp || window.saResolverUsuarioPorLoginInput(fid, authDbObj, listaOperadores) || '';
+            } else if (handleTxt.startsWith('FEDEX_AEREO_')) {
+              encontrado = handleTxt.replace('FEDEX_AEREO_', '').trim().toUpperCase();
+            }
+          }
+        } catch (e) {}
+      }
+      if (!encontrado && nomeAlvo) {
+        encontrado = nomeAlvo;
+      }
+      if (!encontrado) {
+        throw new Error('Nenhuma chave de acesso vinculada encontrada para este aparelho. Digite seu ID FedEx e Senha acima e clique em "Criar / Vincular Chave de Acesso ou Face ID".');
+      }
+      if (authDbObj && authDbObj[encontrado] && authDbObj[encontrado].excluido === true) {
+        throw new Error('Este usuário foi removido do sistema.');
+      }
+      const fidResolvido = window.saObterFedexIdPadrao(encontrado, authDbObj);
+      window.saSalvarPasskeyLocal({ id: credId, usuario: encontrado, fedex_id: fidResolvido, apelido: 'Aparelho Autenticado', criado_em: Date.now() });
+      return { ok: true, usuario: encontrado, fedex_id: fidResolvido, credId };
+    };
+
+    window.saSalvarSessao2h = function(nomeUsuario) {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) return;
+      const agora = Date.now();
+      const payload = {
+        usuario: nomeUp,
+        login_em: agora,
+        ultimo_acesso: agora,
+        ttl_ms: SA_SESSION_TTL_MS
+      };
+      _saLastActivityWriteTs = agora;
+      try {
+        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
+        localStorage.setItem('sistema_aereo_usuario', nomeUp);
+        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
+      } catch (e) {}
+    };
+
+    window.saEncerrarSessao2h = function() {
+      try {
+        localStorage.removeItem(SA_SESSION_STORAGE_KEY);
+        localStorage.removeItem('sistema_aereo_usuario');
+        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
+        localStorage.removeItem('peso-equipe-user');
+        sessionStorage.removeItem(SA_SESSION_STORAGE_KEY);
+      } catch (e) {}
+    };
+
+    window.saLerSessaoValida2h = function(authDbObj) {
+      try {
+        const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY) || sessionStorage.getItem(SA_SESSION_STORAGE_KEY);
+        if (!raw) return null;
+        const sess = JSON.parse(raw);
+        if (!sess || !sess.usuario) return null;
+        const nomeUp = String(sess.usuario).trim().toUpperCase();
+        if (!nomeUp) return null;
+        if (authDbObj && authDbObj[nomeUp] && authDbObj[nomeUp].excluido === true) {
+          window.saEncerrarSessao2h();
+          return null;
+        }
+        const ultimo = Number(sess.ultimo_acesso || sess.login_em || 0);
+        const agora = Date.now();
+        if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
+          window.saEncerrarSessao2h();
+          return null;
+        }
+        sess.ultimo_acesso = agora;
+        _saLastActivityWriteTs = agora;
+        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+        localStorage.setItem('sistema_aereo_usuario', nomeUp);
+        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+        return nomeUp;
+      } catch (e) {
+        return null;
+      }
+    };
+
+    window.saRegistrarMonitorAtividadeSessao2h = function(getCurrentUserFn, onExpiredLogoutFn) {
+      const checkOrTouch = (isUserAction) => {
+        const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
+        if (!uAtual) return;
+        try {
+          const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY);
+          if (!raw) {
+            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
+            return;
+          }
+          const sess = JSON.parse(raw);
+          const ultimo = Number(sess?.ultimo_acesso || sess?.login_em || 0);
+          const agora = Date.now();
+          if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
+            window.saEncerrarSessao2h();
+            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(true);
+            return;
+          }
+          if (isUserAction && (agora - _saLastActivityWriteTs) >= 20000) {
+            sess.ultimo_acesso = agora;
+            _saLastActivityWriteTs = agora;
+            localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+            sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
+          }
+        } catch (e) {}
+      };
+
+      ['pointerdown', 'keydown', 'touchstart'].forEach(evt => {
+        window.addEventListener(evt, () => checkOrTouch(true), { passive: true });
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) checkOrTouch(false);
+      });
+      window.addEventListener('focus', () => checkOrTouch(false));
+      window.addEventListener('storage', (ev) => {
+        if (ev.key === SA_SESSION_STORAGE_KEY && !ev.newValue) {
+          const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
+          if (uAtual && typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
+        }
+      });
+      setInterval(() => {
+        if (!document.hidden) checkOrTouch(false);
+      }, 45000);
+    };
+
+    const saMergePasskeysList = window.saMergePasskeysList;
+    const saObterPasskeysUsuario = window.saObterPasskeysUsuario;
+    const saCadastrarBiometriaPasskey = window.saCadastrarBiometriaPasskey;
+    const saAutenticarBiometriaPasskey = window.saAutenticarBiometriaPasskey;
+    const saSalvarSessao2h = window.saSalvarSessao2h;
+    const saEncerrarSessao2h = window.saEncerrarSessao2h;
+    const saLerSessaoValida2h = window.saLerSessaoValida2h;
+    const saRegistrarMonitorAtividadeSessao2h = window.saRegistrarMonitorAtividadeSessao2h;
+    const saResolverUsuarioPorLoginInput = window.saResolverUsuarioPorLoginInput;
+    const saObterFedexIdPadrao = window.saObterFedexIdPadrao;
+
     let ctrlOperadores = ['FELIPE', 'JAQUELINE', 'KAIO'];
     let ctrlUsuariosAuthDb = {};
     let ctrlUsuarioLogado = null;
@@ -1647,14 +2083,18 @@
         const nome = String(op || '').trim().toUpperCase();
         if (!nome) return;
         const defEmail = CTRL_DEFAULT_FEDEX_EMAILS[nome] || '';
+        const defFedexId = SA_DEFAULT_FEDEX_IDS[nome] || '';
         if (!ctrlUsuariosAuthDb[nome]) {
           ctrlUsuariosAuthDb[nome] = {
             nome,
+            fedex_id: defFedexId,
             senha: '',
-            email: defEmail
+            email: defEmail,
+            atualizado_em: Date.now()
           };
-        } else if (!ctrlUsuariosAuthDb[nome].email && defEmail) {
-          ctrlUsuariosAuthDb[nome].email = defEmail;
+        } else {
+          if (!ctrlUsuariosAuthDb[nome].email && defEmail) ctrlUsuariosAuthDb[nome].email = defEmail;
+          if (!ctrlUsuariosAuthDb[nome].fedex_id && defFedexId) ctrlUsuariosAuthDb[nome].fedex_id = defFedexId;
         }
       });
     }
@@ -1692,335 +2132,16 @@
                   continue;
                 }
 
-    // =========================================================================
-    // SESSÃO INTELIGENTE DE 2 HORAS + BIOMETRIA GRATUITA (WEBAUTHN PASSKEYS: FACE ID / DIGITAL)
-    // =========================================================================
-    const SA_SESSION_STORAGE_KEY = 'sistema_aereo_sessao_2h_v2';
-    const SA_PASSKEYS_LOCAL_KEY = 'sistema_aereo_passkeys_v1';
-    const SA_SESSION_TTL_MS = 2 * 60 * 60 * 1000; // 2 horas (7.200.000 ms)
-    let _saLastActivityWriteTs = 0;
 
-    function saBufferToBase64Url(buffer) {
-      const bytes = new Uint8Array(buffer);
-      let binary = '';
-      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-    }
-
-    function saBase64UrlToUint8Array(base64url) {
-      const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
-      const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
-      const rawData = atob(base64);
-      const outputArray = new Uint8Array(rawData.length);
-      for (let i = 0; i < rawData.length; ++i) outputArray[i] = rawData.charCodeAt(i);
-      return outputArray;
-    }
-
-    function saMergePasskeysList(listA, listB) {
-      const map = new Map();
-      const addAll = (arr) => {
-        if (!Array.isArray(arr)) return;
-        for (const item of arr) {
-          if (item && item.id && typeof item.id === 'string') {
-            map.set(item.id, {
-              id: item.id,
-              usuario: String(item.usuario || '').trim().toUpperCase(),
-              apelido: String(item.apelido || 'Aparelho'),
-              criado_em: Number(item.criado_em || Date.now())
-            });
-          }
-        }
-      };
-      addAll(listA);
-      addAll(listB);
-      return Array.from(map.values());
-    }
-
-    function saLerPasskeysLocaisMap() {
-      try {
-        const raw = localStorage.getItem(SA_PASSKEYS_LOCAL_KEY);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object') return parsed;
-        }
-      } catch (e) {}
-      return {};
-    }
-
-    function saSalvarPasskeyLocal(entry) {
-      if (!entry || !entry.id) return;
-      const map = saLerPasskeysLocaisMap();
-      map[entry.id] = entry;
-      try {
-        localStorage.setItem(SA_PASSKEYS_LOCAL_KEY, JSON.stringify(map));
-      } catch (e) {}
-    }
-
-    function saObterPasskeysUsuario(nomeUsuario, authDbObj) {
-      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
-      if (!nomeUp) return [];
-      const fromDb = (authDbObj && authDbObj[nomeUp] && Array.isArray(authDbObj[nomeUp].passkeys))
-        ? authDbObj[nomeUp].passkeys
-        : [];
-      const localMap = saLerPasskeysLocaisMap();
-      const fromLocal = Object.values(localMap).filter(p => p && String(p.usuario || '').trim().toUpperCase() === nomeUp);
-      return saMergePasskeysList(fromDb, fromLocal);
-    }
-
-    function saObterTodasPasskeysConhecidas(authDbObj) {
-      let todas = Object.values(saLerPasskeysLocaisMap());
-      if (authDbObj && typeof authDbObj === 'object') {
-        for (const [k, v] of Object.entries(authDbObj)) {
-          if (v && !v.excluido && Array.isArray(v.passkeys)) {
-            const uName = String(k || v.nome || '').trim().toUpperCase();
-            const norm = v.passkeys.map(p => ({ ...p, usuario: p.usuario || uName }));
-            todas = saMergePasskeysList(todas, norm);
-          }
-        }
-      }
-      return todas;
-    }
-
-    function saWebAuthnDisponivel() {
-      return Boolean(window.PublicKeyCredential && navigator.credentials && window.isSecureContext);
-    }
-
-    async function saCadastrarBiometriaPasskey(nomeUsuario, authDbObj, saveAndSyncCallback) {
-      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
-      if (!nomeUp) throw new Error('Selecione um operador válido.');
-      if (!saWebAuthnDisponivel()) {
-        throw new Error('O Face ID / Biometria requer abrir o sistema diretamente via link seguro (HTTPS ou localhost).');
-      }
-      const challenge = new Uint8Array(32);
-      crypto.getRandomValues(challenge);
-      const userIdBytes = new TextEncoder().encode('FEDEX_AEREO_' + nomeUp);
-      const existing = saObterPasskeysUsuario(nomeUp, authDbObj);
-      const excludeCredentials = existing.map(p => {
-        try {
-          return { id: saBase64UrlToUint8Array(p.id), type: 'public-key' };
-        } catch (e) { return null; }
-      }).filter(Boolean);
-
-      const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-      const isAndroid = /Android/i.test(navigator.userAgent);
-      const apelidoAparelho = isIOS ? 'iPhone / iPad (Face ID / Touch ID)' : (isAndroid ? 'Android (Biometria / Digital)' : 'Computador (Windows Hello / Touch ID)');
-
-      const createOptions = {
-        publicKey: {
-          challenge,
-          rp: { name: 'Sistema Aéreo FedEx Linehaul' },
-          user: {
-            id: userIdBytes,
-            name: nomeUp.toLowerCase() + '@fedex.linehaul',
-            displayName: nomeUp
-          },
-          pubKeyCredParams: [
-            { type: 'public-key', alg: -7 },
-            { type: 'public-key', alg: -257 }
-          ],
-          authenticatorSelection: {
-            userVerification: 'required',
-            residentKey: 'preferred',
-            requireResidentKey: false
-          },
-          timeout: 60000,
-          attestation: 'none'
-        }
-      };
-
-      const cred = await navigator.credentials.create(createOptions);
-      if (!cred || !cred.rawId) throw new Error('Não foi possível criar a chave de acesso biométrica.');
-
-      const credId = saBufferToBase64Url(cred.rawId);
-      const novaEntry = {
-        id: credId,
-        usuario: nomeUp,
-        apelido: apelidoAparelho,
-        criado_em: Date.now()
-      };
-
-      saSalvarPasskeyLocal(novaEntry);
-      if (authDbObj && typeof authDbObj === 'object') {
-        if (!authDbObj[nomeUp]) authDbObj[nomeUp] = { nome: nomeUp, senha: '', email: '' };
-        authDbObj[nomeUp].passkeys = saMergePasskeysList(authDbObj[nomeUp].passkeys, [novaEntry]);
-        authDbObj[nomeUp].atualizado_em = Date.now();
-      }
-      if (typeof saveAndSyncCallback === 'function') {
-        await saveAndSyncCallback();
-      }
-      return novaEntry;
-    }
-
-    async function saAutenticarBiometriaPasskey(nomeOpcional, authDbObj) {
-      if (!saWebAuthnDisponivel()) {
-        throw new Error('O Face ID / Biometria requer abrir o sistema diretamente via link seguro (HTTPS ou localhost).');
-      }
-      const nomeAlvo = nomeOpcional ? String(nomeOpcional).trim().toUpperCase() : '';
-      const listaPasskeys = nomeAlvo
-        ? saObterPasskeysUsuario(nomeAlvo, authDbObj)
-        : saObterTodasPasskeysConhecidas(authDbObj);
-
-      const allowCredentials = listaPasskeys.map(p => {
-        try {
-          return { id: saBase64UrlToUint8Array(p.id), type: 'public-key' };
-        } catch (e) { return null; }
-      }).filter(Boolean);
-
-      const challenge = new Uint8Array(32);
-      crypto.getRandomValues(challenge);
-
-      const getOptions = {
-        publicKey: {
-          challenge,
-          userVerification: 'required',
-          timeout: 60000
-        }
-      };
-      if (allowCredentials.length > 0) {
-        getOptions.publicKey.allowCredentials = allowCredentials;
-      }
-
-      const assertion = await navigator.credentials.get(getOptions);
-      if (!assertion || !assertion.rawId) {
-        throw new Error('Autenticação biométrica não concluída.');
-      }
-
-      const credId = saBufferToBase64Url(assertion.rawId);
-      const todas = saObterTodasPasskeysConhecidas(authDbObj);
-      let encontrado = todas.find(p => p.id === credId)?.usuario || '';
-
-      if (!encontrado && assertion.response && assertion.response.userHandle) {
-        try {
-          const handleTxt = new TextDecoder().decode(assertion.response.userHandle);
-          if (handleTxt && handleTxt.startsWith('FEDEX_AEREO_')) {
-            encontrado = handleTxt.replace('FEDEX_AEREO_', '').trim().toUpperCase();
-          }
-        } catch (e) {}
-      }
-      if (!encontrado && nomeAlvo) {
-        encontrado = nomeAlvo;
-      }
-      if (!encontrado) {
-        throw new Error('Chave biométrica reconhecida, mas ainda não vinculada a um operador neste navegador. Entre uma vez com sua senha e clique em "Ativar Face ID / Biometria".');
-      }
-      if (authDbObj && authDbObj[encontrado] && authDbObj[encontrado].excluido === true) {
-        throw new Error('Este usuário foi removido do sistema.');
-      }
-      // Garante que a passkey fique salva também no cache local deste aparelho
-      saSalvarPasskeyLocal({ id: credId, usuario: encontrado, apelido: 'Aparelho Autenticado', criado_em: Date.now() });
-      return { ok: true, usuario: encontrado, credId };
-    }
-
-    function saSalvarSessao2h(nomeUsuario) {
-      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
-      if (!nomeUp) return;
-      const agora = Date.now();
-      const payload = {
-        usuario: nomeUp,
-        login_em: agora,
-        ultimo_acesso: agora,
-        ttl_ms: SA_SESSION_TTL_MS
-      };
-      _saLastActivityWriteTs = agora;
-      try {
-        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
-        localStorage.setItem('sistema_aereo_usuario', nomeUp);
-        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(payload));
-      } catch (e) {}
-    }
-
-    function saEncerrarSessao2h() {
-      try {
-        localStorage.removeItem(SA_SESSION_STORAGE_KEY);
-        localStorage.removeItem('sistema_aereo_usuario');
-        localStorage.removeItem('sistema_aereo_sessao_autenticada_v1');
-        localStorage.removeItem('peso-equipe-user');
-        sessionStorage.removeItem(SA_SESSION_STORAGE_KEY);
-      } catch (e) {}
-    }
-
-    function saLerSessaoValida2h(authDbObj) {
-      try {
-        const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY) || sessionStorage.getItem(SA_SESSION_STORAGE_KEY);
-        if (!raw) return null;
-        const sess = JSON.parse(raw);
-        if (!sess || !sess.usuario) return null;
-        const nomeUp = String(sess.usuario).trim().toUpperCase();
-        if (!nomeUp) return null;
-        if (authDbObj && authDbObj[nomeUp] && authDbObj[nomeUp].excluido === true) {
-          saEncerrarSessao2h();
-          return null;
-        }
-        const ultimo = Number(sess.ultimo_acesso || sess.login_em || 0);
-        const agora = Date.now();
-        if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
-          saEncerrarSessao2h();
-          return null;
-        }
-        // Renova o timestamp de último acesso dentro da janela de 2h
-        sess.ultimo_acesso = agora;
-        _saLastActivityWriteTs = agora;
-        localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
-        localStorage.setItem('sistema_aereo_usuario', nomeUp);
-        sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
-        return nomeUp;
-      } catch (e) {
-        return null;
-      }
-    }
-
-    function saRegistrarMonitorAtividadeSessao2h(getCurrentUserFn, onExpiredLogoutFn) {
-      const checkOrTouch = (isUserAction) => {
-        const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
-        if (!uAtual) return;
-        try {
-          const raw = localStorage.getItem(SA_SESSION_STORAGE_KEY);
-          if (!raw) {
-            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
-            return;
-          }
-          const sess = JSON.parse(raw);
-          const ultimo = Number(sess?.ultimo_acesso || sess?.login_em || 0);
-          const agora = Date.now();
-          if (!ultimo || (agora - ultimo) > SA_SESSION_TTL_MS) {
-            saEncerrarSessao2h();
-            if (typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(true);
-            return;
-          }
-          if (isUserAction && (agora - _saLastActivityWriteTs) >= 20000) {
-            sess.ultimo_acesso = agora;
-            _saLastActivityWriteTs = agora;
-            localStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
-            sessionStorage.setItem(SA_SESSION_STORAGE_KEY, JSON.stringify(sess));
-          }
-        } catch (e) {}
-      };
-
-      ['pointerdown', 'keydown', 'touchstart'].forEach(evt => {
-        window.addEventListener(evt, () => checkOrTouch(true), { passive: true });
-      });
-      document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) checkOrTouch(false);
-      });
-      window.addEventListener('focus', () => checkOrTouch(false));
-      window.addEventListener('storage', (ev) => {
-        if (ev.key === SA_SESSION_STORAGE_KEY && !ev.newValue) {
-          const uAtual = typeof getCurrentUserFn === 'function' ? getCurrentUserFn() : null;
-          if (uAtual && typeof onExpiredLogoutFn === 'function') onExpiredLogoutFn(false);
-        }
-      });
-      setInterval(() => {
-        if (!document.hidden) checkOrTouch(false);
-      }, 45000);
-    }
 
                 const loc = ctrlUsuariosAuthDb[nome] || {};
                 const defEmail = CTRL_DEFAULT_FEDEX_EMAILS[nome] || '';
                 ctrlUsuariosAuthDb[nome] = {
                   nome,
+                  fedex_id: String(v?.fedex_id || loc.fedex_id || SA_DEFAULT_FEDEX_IDS[nome] || ''),
                   senha: (v && v.senha !== undefined) ? String(v.senha || '') : String(loc.senha || ''),
                   email: (v && v.email && String(v.email).trim() !== '') ? String(v.email).trim().toLowerCase() : String(loc.email || defEmail),
-                  passkeys: saMergePasskeysList(loc.passkeys, v?.passkeys),
+                  passkeys: window.saMergePasskeysList(loc.passkeys, v?.passkeys),
                   atualizado_em: v?.atualizado_em || loc.atualizado_em || Date.now()
                 };
                 if (!ctrlOperadores.includes(nome)) {
@@ -2262,18 +2383,120 @@
       }
     };
 
+    window.submitCtrlStandardLogin = async function(criarChaveAcesso = false) {
+      const fbId = 'ctrlDirectLoginFeedback';
+      document.getElementById(fbId)?.classList.add('hidden');
+      const rawUser = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
+      const rawPass = (document.getElementById('ctrlDirectInputPass')?.value || '').trim();
+
+      if (!rawUser) {
+        showCtrlAuthFeedback(fbId, 'Digite seu Usuário (ID FedEx), por exemplo: 8953406.');
+        document.getElementById('ctrlDirectInputUser')?.focus();
+        return;
+      }
+
+      loadCtrlGlobalAuthFromStorage();
+      let nomeResolvido = window.saResolverUsuarioPorLoginInput(rawUser, ctrlUsuariosAuthDb, ctrlOperadores);
+      if (!nomeResolvido) {
+        await syncCtrlGlobalAuthFromSupabase();
+        nomeResolvido = window.saResolverUsuarioPorLoginInput(rawUser, ctrlUsuariosAuthDb, ctrlOperadores);
+      }
+      if (!nomeResolvido) {
+        showCtrlAuthFeedback(fbId, `ID FedEx ou usuário "${rawUser}" não encontrado. Confira seu ID FedEx (Felipe: 8953406 | Kaio: 2575760 | Jaqueline: 3853831).`);
+        return;
+      }
+
+      let uAuth = ctrlUsuariosAuthDb[nomeResolvido] || {};
+      let temSenha = Boolean(uAuth.senha && String(uAuth.senha).trim().length > 0);
+      if (!temSenha) {
+        await syncCtrlGlobalAuthFromSupabase();
+        uAuth = ctrlUsuariosAuthDb[nomeResolvido] || {};
+        temSenha = Boolean(uAuth.senha && String(uAuth.senha).trim().length > 0);
+      }
+
+      if (!temSenha) {
+        // 1º acesso deste operador: abre modal de criação de senha global
+        selectCtrlUserLogin(nomeResolvido);
+        return;
+      }
+
+      if (!rawPass) {
+        showCtrlAuthFeedback(fbId, criarChaveAcesso
+          ? `Olá ${nomeResolvido}! Digite sua senha acima para validar e criar sua Chave de Acesso / Biometria neste aparelho.`
+          : `Olá ${nomeResolvido}! Digite sua senha para entrar.`);
+        document.getElementById('ctrlDirectInputPass')?.focus();
+        return;
+      }
+
+      if (String(uAuth.senha).trim() !== rawPass) {
+        await syncCtrlGlobalAuthFromSupabase();
+        uAuth = ctrlUsuariosAuthDb[nomeResolvido] || {};
+      }
+      if (String(uAuth.senha || '').trim() !== rawPass) {
+        showCtrlAuthFeedback(fbId, 'Senha incorreta. Tente novamente ou clique em "Esqueci a senha" abaixo.');
+        return;
+      }
+
+      if (criarChaveAcesso) {
+        try {
+          await window.saCadastrarBiometriaPasskey(nomeResolvido, ctrlUsuariosAuthDb, pushCtrlGlobalAuthToSupabase);
+          showToast(`🔐 Chave de Acesso / Biometria vinculada com sucesso ao ID ${window.saObterFedexIdPadrao(nomeResolvido, ctrlUsuariosAuthDb)} (${nomeResolvido})!`);
+        } catch (err) {
+          showCtrlAuthFeedback(fbId, err?.message || 'Não foi possível criar a Chave de Acesso neste aparelho.');
+          return;
+        }
+      }
+
+      const inpP = document.getElementById('ctrlDirectInputPass');
+      if (inpP) inpP.value = '';
+      completeCtrlAuthenticatedLogin(nomeResolvido);
+    };
+
+    window.triggerCtrlStandardForgotPassword = async function() {
+      const fbId = 'ctrlDirectLoginFeedback';
+      const rawUser = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
+      if (!rawUser) {
+        showCtrlAuthFeedback(fbId, 'Digite seu Usuário (ID FedEx) no campo acima primeiro e depois clique em "Esqueci a senha".');
+        document.getElementById('ctrlDirectInputUser')?.focus();
+        return;
+      }
+      await syncCtrlGlobalAuthFromSupabase();
+      const nomeResolvido = window.saResolverUsuarioPorLoginInput(rawUser, ctrlUsuariosAuthDb, ctrlOperadores);
+      if (!nomeResolvido) {
+        showCtrlAuthFeedback(fbId, `ID FedEx "${rawUser}" não encontrado.`);
+        return;
+      }
+      ctrlUsuarioSelecionadoModal = nomeResolvido;
+      const defEmail = CTRL_DEFAULT_FEDEX_EMAILS[nomeResolvido] || '';
+      const uAuth = ctrlUsuariosAuthDb[nomeResolvido] || { nome: nomeResolvido, email: defEmail };
+      const emailCorp = String(uAuth.email || defEmail || '').trim().toLowerCase();
+      if (!emailCorp) {
+        showCtrlAuthFeedback(fbId, `O operador ${nomeResolvido} ainda não possui e-mail corporativo cadastrado.`);
+        return;
+      }
+      triggerCtrlForgotPassEmail();
+      showCtrlAuthFeedback(
+        fbId,
+        `✅ Olá ${nomeResolvido}, sua senha foi enviada para o seu e-mail corporativo da FedEx (${emailCorp}). Confira sua caixa de entrada!`,
+        'sucesso'
+      );
+    };
+
     window.loginCtrlWithBiometricsDirect = async function() {
+      const fbId = 'ctrlDirectLoginFeedback';
+      document.getElementById(fbId)?.classList.add('hidden');
+      const rawUser = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
       try {
         await syncCtrlGlobalAuthFromSupabase();
       } catch (e) {}
       try {
-        const res = await saAutenticarBiometriaPasskey('', ctrlUsuariosAuthDb);
+        const res = await window.saAutenticarBiometriaPasskey(rawUser, ctrlUsuariosAuthDb, ctrlOperadores);
         if (res && res.ok && res.usuario) {
           completeCtrlAuthenticatedLogin(res.usuario);
-          showToast(`🔐 Bem-vindo de volta, ${res.usuario}!`);
+          showToast(`🔐 Bem-vindo, ${res.usuario} (ID ${res.fedex_id || window.saObterFedexIdPadrao(res.usuario, ctrlUsuariosAuthDb)})!`);
         }
       } catch (err) {
-        showToast(err?.message || 'Selecione seu nome para entrar com senha e ativar o Face ID / Biometria neste aparelho.');
+        showCtrlAuthFeedback(fbId, err?.message || 'Para usar Chave de Acesso ou Face ID pela 1ª vez neste aparelho, digite seu ID FedEx e Senha acima e clique em "Criar / Vincular Chave de Acesso ou Face ID".');
       }
     };
 
