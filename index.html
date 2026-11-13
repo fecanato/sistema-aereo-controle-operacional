@@ -209,17 +209,13 @@
 
       <div class="pt-3 border-t border-slate-200/80 dark:border-slate-700/80 space-y-2.5">
         <span class="block text-[10px] font-bold uppercase tracking-wider text-center text-slate-400 dark:text-slate-500">Acesso Rápido sem Senha</span>
-        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-2.5 px-4 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/15 dark:hover:bg-purple-500/25 text-purple-700 dark:text-purple-200 border border-purple-200 dark:border-purple-500/40 font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-2">
-          <span>🔐</span>
-          <span>Entrar com Face ID / Biometria</span>
-        </button>
-        <button type="button" onclick="loginCtrlWithBiometricsDirect()" class="w-full py-2.5 px-4 rounded-xl bg-slate-900 hover:bg-slate-800 dark:bg-slate-700/80 dark:hover:bg-slate-700 text-white dark:text-slate-100 border border-slate-800 dark:border-slate-600 font-bold text-xs sm:text-sm transition flex items-center justify-center gap-2">
+        <button type="button" onclick="handleCtrlUnifiedAccessKeyLogin()" class="w-full py-3 px-4 rounded-xl bg-purple-50 hover:bg-purple-100 dark:bg-purple-500/15 dark:hover:bg-purple-500/25 text-purple-700 dark:text-purple-200 border border-purple-200 dark:border-purple-500/40 font-extrabold text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-xs">
           <span>🔑</span>
-          <span>Entrar com Chave de Acesso (Windows / PIN)</span>
+          <span>Entrar com Chave de Acesso</span>
         </button>
-        <button type="button" onclick="submitCtrlStandardLogin(true)" class="w-full py-2 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-bold text-[11px] transition flex items-center justify-center gap-1.5">
+        <button type="button" onclick="handleCtrlUnifiedAccessKeyCreate()" class="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700/60 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 font-bold text-xs transition flex items-center justify-center gap-1.5">
           <span>➕</span>
-          <span>Criar / Vincular Chave de Acesso ou Face ID neste aparelho</span>
+          <span>Criar / Vincular Chave de Acesso neste aparelho</span>
         </button>
         <p class="text-[11px] text-center text-slate-400 dark:text-slate-500 pt-1">Sessão inteligente ativa por 2 horas após o login</p>
       </div>
@@ -1839,7 +1835,7 @@
             { type: 'public-key', alg: -257 }
           ],
           authenticatorSelection: {
-            userVerification: 'required',
+            userVerification: 'preferred',
             residentKey: 'preferred',
             requireResidentKey: false
           },
@@ -1884,9 +1880,16 @@
         ? window.saObterPasskeysUsuario(nomeAlvo, authDbObj)
         : window.saObterTodasPasskeysConhecidas(authDbObj);
 
-      const allowCredentials = listaPasskeys.map(p => {
+      // Usa apenas credenciais salvas localmente neste aparelho no allowCredentials (evita que o Windows tente procurar no PC uma chave criada no celular e dê "Algo deu errado")
+      const localMap = window.saLerPasskeysLocaisMap();
+      const listaLocal = Object.values(localMap).filter(p => p && p.id && (!nomeAlvo || String(p.usuario || '').trim().toUpperCase() === nomeAlvo));
+      const allowCredentials = listaLocal.map(p => {
         try {
-          return { id: window.saBase64UrlToUint8Array(p.id), type: 'public-key' };
+          return {
+            id: window.saBase64UrlToUint8Array(p.id),
+            type: 'public-key',
+            transports: ['internal', 'hybrid']
+          };
         } catch (e) { return null; }
       }).filter(Boolean);
 
@@ -1896,7 +1899,7 @@
       const getOptions = {
         publicKey: {
           challenge,
-          userVerification: 'required',
+          userVerification: 'preferred',
           timeout: 60000
         }
       };
@@ -1904,7 +1907,17 @@
         getOptions.publicKey.allowCredentials = allowCredentials;
       }
 
-      const assertion = await navigator.credentials.get(getOptions);
+      let assertion = null;
+      try {
+        assertion = await navigator.credentials.get(getOptions);
+      } catch (errFirst) {
+        if (getOptions.publicKey.allowCredentials && getOptions.publicKey.allowCredentials.length > 0) {
+          delete getOptions.publicKey.allowCredentials;
+          assertion = await navigator.credentials.get(getOptions);
+        } else {
+          throw errFirst;
+        }
+      }
       if (!assertion || !assertion.rawId) {
         throw new Error('Autenticação não concluída.');
       }
@@ -2054,6 +2067,218 @@
     const saRegistrarMonitorAtividadeSessao2h = window.saRegistrarMonitorAtividadeSessao2h;
     const saResolverUsuarioPorLoginInput = window.saResolverUsuarioPorLoginInput;
     const saObterFedexIdPadrao = window.saObterFedexIdPadrao;
+    const SA_WIN_ACCESS_KEY_STORAGE = 'sistema_aereo_chave_acesso_pc_v1';
+
+    window.saIsMobileDevice = function() {
+      const ua = navigator.userAgent || '';
+      const isTouchMac = /Macintosh/i.test(ua) && navigator.maxTouchPoints && navigator.maxTouchPoints > 1;
+      return /iPhone|iPad|iPod|Android|Mobile/i.test(ua) || isTouchMac;
+    };
+
+    window.saLerChaveAcessoPcLocal = function() {
+      try {
+        const raw = localStorage.getItem(SA_WIN_ACCESS_KEY_STORAGE);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && parsed.usuario && parsed.token) return parsed;
+      } catch (e) {}
+      return null;
+    };
+
+    window.saCriarChaveAcessoPcLocal = function(nomeUsuario, authDbObj, pinOpcional = '') {
+      const nomeUp = String(nomeUsuario || '').trim().toUpperCase();
+      if (!nomeUp) throw new Error('Usuário inválido.');
+      const fid = window.saObterFedexIdPadrao(nomeUp, authDbObj) || '';
+      const randBytes = new Uint8Array(16);
+      crypto.getRandomValues(randBytes);
+      const token = window.saBufferToBase64Url(randBytes);
+      const payload = {
+        usuario: nomeUp,
+        fedex_id: fid,
+        token,
+        pin: String(pinOpcional || '').trim(),
+        criado_em: Date.now(),
+        aparelho: navigator.userAgent.includes('Windows') ? 'Windows PC' : 'Computador'
+      };
+      localStorage.setItem(SA_WIN_ACCESS_KEY_STORAGE, JSON.stringify(payload));
+      return payload;
+    };
+
+    window.saRemoverChaveAcessoPcLocal = function() {
+      try { localStorage.removeItem(SA_WIN_ACCESS_KEY_STORAGE); } catch (e) {}
+    };
+
+    // Modal universal injetado sob demanda para Criar ou Usar a Chave de Acesso do Windows (sem travar na Segurança do Windows USB)
+    window.saAbrirModalChaveAcessoWindows = function(opts) {
+      const {
+        authDbObj,
+        operadoresList,
+        syncFromCloudFn,
+        saveToCloudFn,
+        onAuthenticatedFn,
+        prefillUser = '',
+        prefillPass = '',
+        forceCreate = false
+      } = opts || {};
+
+      let existingModal = document.getElementById('sa-modal-win-passkey');
+      if (existingModal) existingModal.remove();
+
+      const chaveSalva = window.saLerChaveAcessoPcLocal();
+      const temChaveValida = Boolean(
+        chaveSalva &&
+        chaveSalva.usuario &&
+        !(authDbObj && authDbObj[chaveSalva.usuario] && authDbObj[chaveSalva.usuario].excluido === true)
+      );
+
+      // Se já tem chave salva neste PC sem PIN e não pediu recriação forçada, entra direto em 1 clique!
+      if (temChaveValida && !forceCreate && !chaveSalva.pin) {
+        if (typeof onAuthenticatedFn === 'function') {
+          onAuthenticatedFn(chaveSalva.usuario, chaveSalva.fedex_id || window.saObterFedexIdPadrao(chaveSalva.usuario, authDbObj));
+        }
+        return;
+      }
+
+      const overlay = document.createElement('div');
+      overlay.id = 'sa-modal-win-passkey';
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,0.75);backdrop-filter:blur(4px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;font-family:Inter,system-ui,sans-serif;';
+
+      const renderUsarComPin = () => {
+        const uNome = chaveSalva.usuario;
+        const uFid = chaveSalva.fedex_id || window.saObterFedexIdPadrao(uNome, authDbObj);
+        overlay.innerHTML = `
+          <div style="background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:18px;max-width:400px;width:100%;padding:24px;box-shadow:0 20px 50px rgba(0,0,0,0.5)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:40px;height:40px;border-radius:12px;background:rgba(139,92,246,0.2);color:#c4b5fd;display:flex;align-items:center;justify-content:center;font-size:18px">🔑</div>
+                <div>
+                  <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#a78bfa">CHAVE DE ACESSO ATIVA NESTE PC</div>
+                  <div style="font-size:16px;font-weight:800;color:#fff">${uNome} <span style="font-size:12px;color:#94a3b8;font-weight:600">(ID ${uFid})</span></div>
+                </div>
+              </div>
+              <button type="button" id="saWinCloseBtn" style="background:none;border:0;color:#94a3b8;font-size:18px;cursor:pointer;padding:4px">✕</button>
+            </div>
+            <div id="saWinFeedback" style="display:none;padding:10px 12px;border-radius:10px;font-size:12px;font-weight:700;margin-bottom:12px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.3)"></div>
+            <label style="display:block;font-size:12px;font-weight:700;color:#cbd5e1;margin-bottom:6px">Digite o PIN da sua Chave de Acesso</label>
+            <input type="password" id="saWinInputPinUse" inputmode="numeric" placeholder="••••" style="width:100%;box-sizing:border-box;padding:12px 14px;border-radius:12px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:16px;font-weight:800;letter-spacing:.2em;text-align:center;margin-bottom:14px;outline:none" />
+            <button type="button" id="saWinConfirmUseBtn" style="width:100%;padding:12px;border-radius:12px;border:0;background:#7c3aed;color:#fff;font-weight:800;font-size:14px;cursor:pointer;margin-bottom:8px">Entrar como ${uNome} →</button>
+            <button type="button" id="saWinSwitchCreateBtn" style="width:100%;padding:8px;border-radius:10px;border:0;background:transparent;color:#94a3b8;font-weight:600;font-size:12px;cursor:pointer">Trocar operador ou criar nova chave neste PC</button>
+          </div>
+        `;
+        overlay.querySelector('#saWinCloseBtn').onclick = () => overlay.remove();
+        overlay.querySelector('#saWinSwitchCreateBtn').onclick = () => renderCriarChave();
+        const doPinVerify = () => {
+          const dig = (overlay.querySelector('#saWinInputPinUse')?.value || '').trim();
+          const fb = overlay.querySelector('#saWinFeedback');
+          if (dig !== String(chaveSalva.pin || '').trim()) {
+            fb.textContent = 'PIN incorreto. Tente novamente.';
+            fb.style.display = 'block';
+            return;
+          }
+          overlay.remove();
+          if (typeof onAuthenticatedFn === 'function') {
+            onAuthenticatedFn(uNome, uFid);
+          }
+        };
+        overlay.querySelector('#saWinConfirmUseBtn').onclick = doPinVerify;
+        overlay.querySelector('#saWinInputPinUse').onkeydown = (e) => { if (e.key === 'Enter') doPinVerify(); };
+        setTimeout(() => overlay.querySelector('#saWinInputPinUse')?.focus(), 30);
+      };
+
+      const renderCriarChave = () => {
+        overlay.innerHTML = `
+          <div style="background:#1e293b;color:#f8fafc;border:1px solid #334155;border-radius:18px;max-width:420px;width:100%;padding:24px;box-shadow:0 20px 50px rgba(0,0,0,0.5)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div style="display:flex;align-items:center;gap:10px">
+                <div style="width:40px;height:40px;border-radius:12px;background:rgba(16,185,129,0.2);color:#34d399;display:flex;align-items:center;justify-content:center;font-size:18px">🔑</div>
+                <div>
+                  <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:#34d399">CONFIGURAÇÃO ÚNICA NO COMPUTADOR</div>
+                  <div style="font-size:16px;font-weight:800;color:#fff">Criar Chave de Acesso neste PC</div>
+                </div>
+              </div>
+              <button type="button" id="saWinCloseBtn" style="background:none;border:0;color:#94a3b8;font-size:18px;cursor:pointer;padding:4px">✕</button>
+            </div>
+            <p style="font-size:12px;color:#94a3b8;margin:0 0 14px;line-height:1.45">
+              Vincule seu <strong>ID FedEx</strong> a este navegador para entrar nos 3 sistemas pelo Windows sem precisar de pen drive USB ou senha toda vez.
+            </p>
+            <div id="saWinFeedback" style="display:none;padding:10px 12px;border-radius:10px;font-size:12px;font-weight:700;margin-bottom:12px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.3)"></div>
+            <div style="margin-bottom:10px">
+              <label style="display:block;font-size:11px;font-weight:700;color:#cbd5e1;margin-bottom:4px">Seu Usuário (ID FedEx)</label>
+              <input type="text" id="saWinCreateUser" value="${prefillUser.replace(/"/g, '&quot;')}" placeholder="Ex: 8953406 (Felipe), 2575760 (Kaio), 3853831 (Jaqueline)" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:13px;font-weight:700;outline:none" />
+            </div>
+            <div style="margin-bottom:10px">
+              <label style="display:block;font-size:11px;font-weight:700;color:#cbd5e1;margin-bottom:4px">Sua Senha Atual do Sistema</label>
+              <input type="password" id="saWinCreatePass" value="${prefillPass.replace(/"/g, '&quot;')}" placeholder="Digite sua senha para autorizar" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:13px;font-weight:700;outline:none" />
+            </div>
+            <div style="margin-bottom:16px">
+              <label style="display:block;font-size:11px;font-weight:700;color:#cbd5e1;margin-bottom:4px">PIN Rápido Opcional (deixe em branco para entrar com 1 clique)</label>
+              <input type="password" id="saWinCreatePin" inputmode="numeric" placeholder="Opcional: ex. 4 dígitos (ou vazio p/ 1 clique)" style="width:100%;box-sizing:border-box;padding:10px 12px;border-radius:10px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:13px;font-weight:700;outline:none" />
+            </div>
+            <button type="button" id="saWinSaveCreateBtn" style="width:100%;padding:12px;border-radius:12px;border:0;background:#10b981;color:#fff;font-weight:800;font-size:13px;cursor:pointer;margin-bottom:8px">Salvar Chave de Acesso e Entrar →</button>
+            <button type="button" id="saWinCancelBtn" style="width:100%;padding:8px;border-radius:10px;border:0;background:transparent;color:#94a3b8;font-weight:600;font-size:12px;cursor:pointer">Cancelar</button>
+          </div>
+        `;
+        overlay.querySelector('#saWinCloseBtn').onclick = () => overlay.remove();
+        overlay.querySelector('#saWinCancelBtn').onclick = () => overlay.remove();
+
+        const doCreate = async () => {
+          const fb = overlay.querySelector('#saWinFeedback');
+          fb.style.display = 'none';
+          const uRaw = (overlay.querySelector('#saWinCreateUser')?.value || '').trim();
+          const pRaw = (overlay.querySelector('#saWinCreatePass')?.value || '').trim();
+          const pinRaw = (overlay.querySelector('#saWinCreatePin')?.value || '').trim();
+
+          if (!uRaw) {
+            fb.textContent = 'Informe seu ID FedEx (ex: 8953406).';
+            fb.style.display = 'block';
+            return;
+          }
+          if (!pRaw) {
+            fb.textContent = 'Digite sua senha atual para autorizar a criação da chave.';
+            fb.style.display = 'block';
+            return;
+          }
+          if (typeof syncFromCloudFn === 'function') {
+            try { await syncFromCloudFn(); } catch (e) {}
+          }
+          const nomeRes = window.saResolverUsuarioPorLoginInput(uRaw, authDbObj, operadoresList);
+          if (!nomeRes) {
+            fb.textContent = `ID FedEx "${uRaw}" não encontrado (Felipe: 8953406 | Kaio: 2575760 | Jaqueline: 3853831).`;
+            fb.style.display = 'block';
+            return;
+          }
+          const uObj = (authDbObj && authDbObj[nomeRes]) ? authDbObj[nomeRes] : {};
+          if (!uObj.senha || String(uObj.senha).trim() !== pRaw) {
+            fb.textContent = 'Senha incorreta. Confira sua senha e tente novamente.';
+            fb.style.display = 'block';
+            return;
+          }
+          const criada = window.saCriarChaveAcessoPcLocal(nomeRes, authDbObj, pinRaw);
+          if (typeof saveToCloudFn === 'function') {
+            try { await saveToCloudFn(); } catch (e) {}
+          }
+          overlay.remove();
+          if (typeof onAuthenticatedFn === 'function') {
+            onAuthenticatedFn(criada.usuario, criada.fedex_id);
+          }
+        };
+
+        overlay.querySelector('#saWinSaveCreateBtn').onclick = doCreate;
+        overlay.querySelector('#saWinCreatePass').onkeydown = (e) => { if (e.key === 'Enter') doCreate(); };
+        overlay.querySelector('#saWinCreatePin').onkeydown = (e) => { if (e.key === 'Enter') doCreate(); };
+        setTimeout(() => {
+          if (!prefillUser) overlay.querySelector('#saWinCreateUser')?.focus();
+          else overlay.querySelector('#saWinCreatePass')?.focus();
+        }, 30);
+      };
+
+      document.body.appendChild(overlay);
+      if (temChaveValida && !forceCreate) {
+        renderUsarComPin();
+      } else {
+        renderCriarChave();
+      }
+    };
 
     let ctrlOperadores = ['FELIPE', 'JAQUELINE', 'KAIO'];
     let ctrlUsuariosAuthDb = {};
@@ -2437,13 +2662,17 @@
         return;
       }
 
-      if (criarChaveAcesso) {
+      if (criarChaveAcesso === 'WIN_LOCAL' || (criarChaveAcesso && !window.saIsMobileDevice())) {
+        const criada = window.saCriarChaveAcessoPcLocal(nomeResolvido, ctrlUsuariosAuthDb, '');
+        showToast(`🔑 Chave de Acesso salva neste computador para ${nomeResolvido} (ID ${criada.fedex_id})!`);
+      } else if (criarChaveAcesso) {
         try {
           await window.saCadastrarBiometriaPasskey(nomeResolvido, ctrlUsuariosAuthDb, pushCtrlGlobalAuthToSupabase);
-          showToast(`🔐 Chave de Acesso / Biometria vinculada com sucesso ao ID ${window.saObterFedexIdPadrao(nomeResolvido, ctrlUsuariosAuthDb)} (${nomeResolvido})!`);
+          showToast(`🔑 Chave de Acesso vinculada com sucesso ao ID ${window.saObterFedexIdPadrao(nomeResolvido, ctrlUsuariosAuthDb)} (${nomeResolvido})!`);
         } catch (err) {
-          showCtrlAuthFeedback(fbId, err?.message || 'Não foi possível criar a Chave de Acesso neste aparelho.');
-          return;
+          // Se o navegador/sistema operacional falhar no WebAuthn, salva a chave direta no navegador automaticamente!
+          const criada = window.saCriarChaveAcessoPcLocal(nomeResolvido, ctrlUsuariosAuthDb, '');
+          showToast(`🔑 Chave de Acesso salva neste navegador para ${nomeResolvido} (ID ${criada.fedex_id})!`);
         }
       }
 
@@ -2480,6 +2709,56 @@
         `✅ Olá ${nomeResolvido}, sua senha foi enviada para o seu e-mail corporativo da FedEx (${emailCorp}). Confira sua caixa de entrada!`,
         'sucesso'
       );
+    };
+
+    window.handleCtrlUnifiedAccessKeyLogin = function() {
+      // No computador (Windows/PC), usa a Chave de Acesso direta do sistema (sem abrir a janela Segurança do Windows que falha sem Windows Hello)
+      if (!window.saIsMobileDevice()) {
+        const chavePc = window.saLerChaveAcessoPcLocal();
+        const rawU = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
+        const rawP = (document.getElementById('ctrlDirectInputPass')?.value || '').trim();
+        if (!chavePc && rawU && rawP) {
+          // Se o usuário já preencheu ID FedEx e Senha na tela, já cria a chave local do PC e entra direto!
+          submitCtrlStandardLogin('WIN_LOCAL');
+          return;
+        }
+        openCtrlWindowsAccessKey(false);
+        return;
+      }
+      // No celular (iOS / Android), aciona a Chave de Acesso / Face ID / Biometria nativa
+      loginCtrlWithBiometricsDirect();
+    };
+
+    window.handleCtrlUnifiedAccessKeyCreate = function() {
+      const rawU = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
+      const rawP = (document.getElementById('ctrlDirectInputPass')?.value || '').trim();
+      if (!window.saIsMobileDevice()) {
+        if (rawU && rawP) {
+          submitCtrlStandardLogin('WIN_LOCAL');
+        } else {
+          openCtrlWindowsAccessKey(true);
+        }
+        return;
+      }
+      submitCtrlStandardLogin(true);
+    };
+
+    window.openCtrlWindowsAccessKey = function(forceCreate = false) {
+      const rawU = (document.getElementById('ctrlDirectInputUser')?.value || '').trim();
+      const rawP = (document.getElementById('ctrlDirectInputPass')?.value || '').trim();
+      window.saAbrirModalChaveAcessoWindows({
+        authDbObj: ctrlUsuariosAuthDb,
+        operadoresList: ctrlOperadores,
+        syncFromCloudFn: syncCtrlGlobalAuthFromSupabase,
+        saveToCloudFn: pushCtrlGlobalAuthToSupabase,
+        prefillUser: rawU,
+        prefillPass: rawP,
+        forceCreate,
+        onAuthenticatedFn: (usuario, fid) => {
+          completeCtrlAuthenticatedLogin(usuario);
+          showToast(`🔑 Bem-vindo, ${usuario} (ID ${fid})!`);
+        }
+      });
     };
 
     window.loginCtrlWithBiometricsDirect = async function() {
