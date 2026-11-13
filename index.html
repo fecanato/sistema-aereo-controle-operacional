@@ -55,7 +55,7 @@
   <input id="directReportFileInput" type="file" accept=".xlsx,.xls,.xlsm,.csv,.txt" class="hidden" onchange="handleImportReportFile(event)" />
   <input id="directPesosManualInput" type="file" accept=".xlsx,.xls" class="hidden" onchange="handleImportPesosFile(event)" />
   <input id="directAwbsManualInput" type="file" accept=".xlsx,.xls" class="hidden" onchange="handleImportAwbsFile(event)" />
-  <input id="directCteXmlInput" type="file" accept=".xml" multiple class="hidden" onchange="handleImportCteXmlFiles(event)" />
+  <input id="directCteXmlInput" type="file" accept=".xml,.pdf,.zip,application/pdf,text/xml" multiple class="hidden" onchange="handleImportCteXmlFiles(event)" />
   <input id="directFormalPdfInput" type="file" accept=".pdf,application/pdf" class="hidden" onchange="handleImportFormalPdfFile(event)" />
 
   <!-- Top Header Padronizado da Suíte Sistema Aéreo (Cor: Roxo/Violeta) -->
@@ -482,9 +482,9 @@
               <button type="button" onclick="document.getElementById('directCteXmlInput').click()" class="btn-web group flex items-center justify-between px-4 py-3 rounded-xl bg-emerald-50 hover:bg-emerald-600 dark:bg-emerald-950/50 dark:hover:bg-emerald-600 text-emerald-900 hover:text-white dark:text-emerald-200 border border-emerald-200/80 dark:border-emerald-800/70 font-semibold text-xs shadow-2xs">
                 <span class="flex items-center gap-2">
                   <svg class="w-4 h-4 text-emerald-600 group-hover:text-white dark:text-emerald-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                  <span>CT-E (XML)</span>
+                  <span>CT-E (XML / PDF)</span>
                 </span>
-                <span class="text-[10px] opacity-60 font-normal">Lote XML</span>
+                <span class="text-[10px] opacity-60 font-normal">Lote XML/PDF</span>
               </button>
 
               <button type="button" onclick="openConfirmModal('Limpar CT-es', 'Deseja limpar os arquivos XML de CT-e importados nesta operação?', clearAllCtes)" class="btn-web group flex items-center justify-between px-4 py-3 rounded-xl bg-rose-50/70 hover:bg-rose-600 dark:bg-rose-950/30 dark:hover:bg-rose-600 text-rose-700 hover:text-white dark:text-rose-300 border border-rose-200/80 dark:border-rose-800/60 font-semibold text-xs shadow-2xs">
@@ -495,7 +495,7 @@
           </div>
 
           <div class="px-5 py-3 bg-slate-50/80 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-400 dark:text-slate-500 flex items-center justify-between">
-            <span>Arquivos suportados: .xlsx, .xls, .csv, .html, .xml</span>
+            <span>Arquivos suportados: .xlsx, .xls, .csv, .html, .xml, .pdf</span>
             <span>Seleção direta</span>
           </div>
         </div>
@@ -5333,53 +5333,131 @@
       return known;
     }
 
-    function extractSealsFromObsText(xObs) {
+    function decomposeConcatenatedSealDigits(rawDigits, knownSealsSet = null) {
+      const d = String(rawDigits || '').replace(/\D/g, '');
+      const out = [];
+      const addSeal = (val) => {
+        const norm = normalizeSeal6(val);
+        if (norm && norm !== '009700' && norm !== '951996' && !String(norm).startsWith('000') && !out.includes(norm)) {
+          out.push(norm);
+        }
+      };
+      if (d.length < 4) return out;
+      if (d.length <= 8) {
+        addSeal(d);
+        return out;
+      }
+      // Caso 1: Múltiplo exato de 6 dígitos (ex: 12 dígitos = 2 lacres "032319032316"; 18 dígitos = 3 lacres "032199032318032313")
+      if (d.length % 6 === 0) {
+        for (let i = 0; i < d.length; i += 6) {
+          addSeal(d.slice(i, i + 6));
+        }
+        return out;
+      }
+      // Caso 2: 1º lacre perdeu o zero à esquerda (ex: 11 dígitos = "32319032316" ou 17 dígitos = "32199032318032313")
+      if ((d.length + 1) % 6 === 0 && d[0] !== '0') {
+        const dPad = '0' + d;
+        for (let i = 0; i < dPad.length; i += 6) {
+          addSeal(dPad.slice(i, i + 6));
+        }
+        return out;
+      }
+      // Caso 3: Busca direta pelos lacres esperados do destino/operação dentro da sequência contínua de dígitos
+      if (knownSealsSet && knownSealsSet.size > 0) {
+        for (const ks of knownSealsSet) {
+          if (ks && ks.length === 6 && d.includes(ks)) {
+            addSeal(ks);
+          } else if (ks && ks.startsWith('0') && d.startsWith(ks.slice(1))) {
+            addSeal(ks);
+          }
+        }
+      }
+      // Caso 4: Varre padrões de lacre FedEx de 6 dígitos (0[1-9]\d{4}, ex: 032199, 032318, 032313) colados na string
+      const sixMatches = d.match(/0[1-9]\d{4}/g) || [];
+      for (const m of sixMatches) {
+        addSeal(m);
+      }
+      return out;
+    }
+
+    function extractSealsFromObsText(xObs, targetBlockSeals = null) {
       const seals = [];
       if (!xObs) return seals;
 
-      // Remove previamente trechos fiscais/documentais como "RE IE ÚNICA Nº 009700/16", "RG 172716500", "CPF ...", "UN 3481", "PI967", números com barra (/16, /1996) e dimensões AxBxC
+      // Remove previamente trechos fiscais/documentais como "RE IE ÚNICA Nº 009700/16", "RG 172716500", "CPF ...", "UN 3481", "PI967", "Senado Federal n 951996", números com barra (/16, /1996) e dimensões AxBxC
       const sanitizedObs = String(xObs)
         .replace(/RE\s+IE[\s\S]{0,30}?\d+\s*(?:\/\s*\d+)?/gi, ' ')
         .replace(/\b009700\b/g, ' ')
-        .replace(/\b(?:RG|CPF|CNPJ)\s*[:#º°.-]*\s*[\d.-]+/gi, ' ')
+        .replace(/\b(?:RG|CPF|CNPJ|IE)\s*[:#º°.-]*\s*[\d.-]+/gi, ' ')
+        .replace(/SENADO\s+FEDERAL\s*N[º°.]?\s*\d+/gi, ' ')
+        .replace(/LEI\s+DA\s+TRANSPAR[EÊ]NCIA\s*[\d.,\/]+/gi, ' ')
         .replace(/\bUN\s*[:#-]?\s*\d{4}\b/gi, ' ')
         .replace(/\bPI\s*\d{3,4}\b/gi, ' ')
         .replace(/\b\d{4,8}\s*\/\s*\d{2,4}\b/g, ' ')
         .replace(/\d+(?:[.,]\d+)?\s*[xX*]\s*\d+(?:[.,]\d+)?(?:\s*[xX*]\s*\d+(?:[.,]\d+)?)?/g, ' ')
         .replace(/95\s*\/?\s*1996/g, ' ');
 
-      // 1. Captura sequências explícitas após LACRE/LACRES/LCR/LAC/SEAL/SEALS/SACA C/ separadas por ESPAÇO ou conectores
-      const lacreRegex = /\b(?:LACRE[S]?|LCR[S]?|LAC\.?|SEAL[S]?|SACA[S]?\s+C\/?)\b[^0-9A-Za-z]*((?:\d{4,8}(?:\s*(?:[,\/.;:+&-]|\bE\b|\bOU\b|\bAND\b|\bLACRE[S]?\b|\bLCR[S]?\b|\bLAC\.?\b|\bSEAL[S]?\b)?\s*)+)+)/gi;
-      let match;
-      while ((match = lacreRegex.exec(sanitizedObs)) !== null) {
-        const chunk = match[1] || '';
-        const nums = chunk.match(/\d{4,8}/g) || [];
-        for (const n of nums) {
-          const norm = normalizeSeal6(n);
-          if (norm && norm !== '009700' && !seals.includes(norm)) seals.push(norm);
+      const knownSeals = getAllKnownOperationSealsSet();
+      if (Array.isArray(targetBlockSeals)) {
+        for (const ts of targetBlockSeals) {
+          const n = normalizeSeal6(ts);
+          if (n) knownSeals.add(n);
         }
       }
 
-      // 2. Se já encontrou lacre(s) explícito(s) precedido(s) pela palavra LACRE (padrão LATAM), retorna imediatamente!
+      // 1. Captura sequências explícitas após LACRE/LACRES/LCR/LAC/SEAL/SEALS/SACA C/ (incluindo quando vários lacres vêm colados sem espaço, ex: 032199032318032313 ou 032319032316)
+      const lacreRegex = /\b(?:LACRE[S]?|LCR[S]?|LAC\.?|SEAL[S]?|SACA[S]?\s+C\/?)\b[^0-9A-Za-z]*((?:\d{4,60}(?:\s*(?:[,\/.;:+&-]|\bE\b|\bOU\b|\bAND\b|\bLACRE[S]?\b|\bLCR[S]?\b|\bLAC\.?\b|\bSEAL[S]?\b)?\s*)+)+)/gi;
+      let match;
+      while ((match = lacreRegex.exec(sanitizedObs)) !== null) {
+        const chunk = match[1] || '';
+        const nums = chunk.match(/\d{4,60}/g) || [];
+        for (const n of nums) {
+          const decomposed = decomposeConcatenatedSealDigits(n, knownSeals);
+          for (const s of decomposed) {
+            if (s && !seals.includes(s)) seals.push(s);
+          }
+        }
+      }
+
+      // 2. Se há lacres esperados para o destino (targetBlockSeals), verifica se algum deles está presente dentro do texto sanitizado (mesmo colado sem espaço)
+      if (Array.isArray(targetBlockSeals) && targetBlockSeals.length > 0) {
+        const digitsOnlyObs = sanitizedObs.replace(/\D/g, '');
+        for (const tbs of targetBlockSeals) {
+          const normTbs = normalizeSeal6(tbs);
+          if (normTbs && normTbs.length === 6 && digitsOnlyObs.includes(normTbs) && !seals.includes(normTbs)) {
+            seals.push(normTbs);
+          }
+        }
+      }
+
+      // 3. Se já encontrou lacre(s) explícito(s) precedido(s) pela palavra LACRE (padrão LATAM), retorna imediatamente!
       if (seals.length > 0) {
         return seals;
       }
 
-      // 3. Apenas quando NÃO houver a palavra LACRE (caso de observações da GOL como em PVH: "...Recinto Alfandegaria 032337 Dimensoes..."):
-      // Procura sequências de 6 dígitos iniciadas por 01..09 (ex: 032337, ignorando 00xxxx como 009700) ou lacres já cadastrados na operação
-      const zeroSixMatches = sanitizedObs.match(/\b0[1-9]\d{4}\b/g) || [];
-      for (const m of zeroSixMatches) {
-        const norm = normalizeSeal6(m);
-        if (norm && norm !== '009700' && !seals.includes(norm)) seals.push(norm);
+      // 4. Quando NÃO houver a palavra LACRE (caso de observações da GOL como "...conforme condicoes contratuais.032193. Dimensoes..." ou colados ".032193032194."):
+      const zeroSixConcatMatches = sanitizedObs.match(/\b(?:0[1-9]\d{4})+\b/g) || [];
+      for (const m of zeroSixConcatMatches) {
+        const decomposed = decomposeConcatenatedSealDigits(m, knownSeals);
+        for (const s of decomposed) {
+          if (s && !seals.includes(s)) seals.push(s);
+        }
       }
 
-      const knownSeals = getAllKnownOperationSealsSet();
       if (knownSeals.size > 0) {
-        const candidateNums = sanitizedObs.match(/\b\d{5,7}\b/g) || [];
-        for (const cNum of candidateNums) {
-          const norm = normalizeSeal6(cNum);
-          if (norm && norm !== '009700' && knownSeals.has(norm) && !seals.includes(norm)) {
-            seals.push(norm);
+        const candidateRuns = sanitizedObs.match(/\d{5,48}/g) || [];
+        for (const cRun of candidateRuns) {
+          if (cRun.length <= 7) {
+            const norm = normalizeSeal6(cRun);
+            if (norm && norm !== '009700' && knownSeals.has(norm) && !seals.includes(norm)) {
+              seals.push(norm);
+            }
+          } else {
+            for (const ks of knownSeals) {
+              if (ks && cRun.includes(ks) && !seals.includes(ks)) {
+                seals.push(ks);
+              }
+            }
           }
         }
       }
@@ -5473,10 +5551,14 @@
       const bDigits = String(blockAwbAereo || '').replace(/\D/g, '');
       const cteDigits = String(cte.nOCA || cte.awbAereo || '').replace(/\D/g, '');
       const minuDigits = String(cte.nMinu || '').replace(/\D/g, '');
-      if (!bDigits || !cteDigits) return false;
-      if (bDigits === cteDigits) return true;
+      const nctDigits = String(cte.nCT || '').replace(/\D/g, '');
+      if (!bDigits) return false;
+      if (cteDigits && bDigits === cteDigits) return true;
       if (bDigits.length >= 8 && cteDigits.length >= 8 && bDigits.slice(-8) === cteDigits.slice(-8)) return true;
       if (minuDigits.length >= 8 && bDigits.slice(-8) === minuDigits.slice(-8)) return true;
+      const bNoZero = bDigits.replace(/^0+/, '');
+      const nctNoZero = nctDigits.replace(/^0+/, '');
+      if (bNoZero.length >= 6 && nctNoZero.length >= 6 && bNoZero === nctNoZero) return true;
       return false;
     }
 
@@ -5560,11 +5642,14 @@
         };
       }
 
-      // Reprocessa os lacres de <xObs> removendo falsos positivos fiscais como '009700' (RE IE ÚNICA Nº 009700/16) e preservando <nLacre>
+      // Reprocessa os lacres de <xObs> buscando também os lacres ativos deste destino quando colados sem espaço (ex: 032199032318032313 ou 032319032316)
       {
-        const reExtracted = cte.xObs ? extractSealsFromObsText(cte.xObs) : [];
+        const expectedBlockSeals = getActiveSealsForBlock(b.id);
+        const reExtracted = cte.xObs ? extractSealsFromObsText(cte.xObs, expectedBlockSeals) : [];
         const fromXmlTags = Array.isArray(cte.nLacresXml) ? cte.nLacresXml.map(normalizeSeal6).filter(Boolean) : [];
-        const existingValid = (Array.isArray(cte.lacres) ? cte.lacres : []).map(normalizeSeal6).filter(s => s && s !== '009700' && !String(s).startsWith('00'));
+        const existingValid = (!cte.xObs && Array.isArray(cte.lacres))
+          ? cte.lacres.map(normalizeSeal6).filter(s => s && s !== '009700' && !String(s).startsWith('00'))
+          : [];
         const merged = [];
         for (const s of [...fromXmlTags, ...reExtracted, ...existingValid]) {
           if (s && s !== '009700' && !merged.includes(s)) merged.push(s);
@@ -5891,7 +5976,7 @@
       const cteMentionsPallet = /(?:PALLET|PALLETS|PALETE|PALETES|PLT)/.test(obsUp);
       const cteMentionsDg = Boolean(cte.hasPeriTag) || /(?:DGR|DRY\s*ICE|GELO\s*SECO|UN\s*1845|CARGA\s*PERIGOSA|PERIGOSO|CLASSE\s*[1-9])/.test(obsUp);
       const cteMentionsFormal = /(?:FORMAL|DUIMP)/.test(obsUp);
-      const cteSeals = Array.isArray(cte.lacres) ? cte.lacres.map(normalizeSeal6).filter(Boolean) : [];
+      const cteSeals = cte.xObs ? extractSealsFromObsText(cte.xObs, blockSeals) : (Array.isArray(cte.lacres) ? cte.lacres.map(normalizeSeal6).filter(Boolean) : []);
 
       // 5. Regra Crítica de Lacre vs. Bloco Normal / Saca vs. Bloco Pallet / DG
       if (cteSeals.length > 0) {
@@ -6079,14 +6164,251 @@
       } catch (e) {}
     }
 
+    function parseBrDecimalFromPdf(valStr) {
+      if (!valStr) return 0;
+      const m = String(valStr).match(/(\d{1,3}(?:\.\d{3})+,\d+|\d+,\d+|\d+(?:\.\d+)?)/);
+      if (!m) return 0;
+      let numStr = m[1];
+      if (numStr.includes(',')) {
+        numStr = numStr.replace(/\./g, '').replace(',', '.');
+      }
+      const n = parseFloat(numStr);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    async function parseSingleCtePdf(arrayBuffer, fileName) {
+      if (!window.pdfjsLib) {
+        throw new Error('Biblioteca PDF.js não carregada.');
+      }
+      const copiaBuffer = arrayBuffer.slice(0);
+      const loadingTask = window.pdfjsLib.getDocument({ data: copiaBuffer });
+      const pdf = await loadingTask.promise;
+
+      const p1Items = [];
+      let allText = '';
+
+      const normTxt = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+
+      for (let p = 1; p <= pdf.numPages; p++) {
+        const page = await pdf.getPage(p);
+        const textContent = await page.getTextContent();
+        const pageItems = [];
+        for (const it of (textContent.items || [])) {
+          const rawStr = String(it.str || '').trim();
+          if (!rawStr) continue;
+          const x = it.transform ? Number(it.transform[4] || 0) : 0;
+          const y = it.transform ? Number(it.transform[5] || 0) : 0;
+          const obj = { page: p, str: rawStr, norm: normTxt(rawStr), x, y };
+          pageItems.push(obj);
+          if (p === 1) p1Items.push(obj);
+        }
+        // Ordena de cima para baixo (y decrescente) e da esquerda para a direita (x crescente)
+        pageItems.sort((a, b) => {
+          if (Math.abs(a.y - b.y) > 2.5) return b.y - a.y;
+          return a.x - b.x;
+        });
+        allText += '\n' + pageItems.map(i => i.str).join(' ');
+      }
+
+      const fullNorm = normTxt(allText);
+
+      // 1. Identifica Companhia Aérea (LATAM, GOL, AZUL)
+      let cia = 'LATAM';
+      if (fullNorm.includes('GOL LINHAS') || fullNorm.includes('GOLLOG') || fullNorm.includes('WWW.GOLLOG.COM')) {
+        cia = 'GOL';
+      } else if (fullNorm.includes('AZUL LINHAS') || fullNorm.includes('AZUL CARGO')) {
+        cia = 'AZUL';
+      } else if (fullNorm.includes('TAM LINHAS') || fullNorm.includes('LATAM')) {
+        cia = 'LATAM';
+      }
+
+      // 2. Chave de Acesso (44 dígitos) e Número do CT-e (nCT)
+      let chCTe = '';
+      const mChave = allText.match(/(?:\d{4}[\s.]?){10}\d{4}/);
+      if (mChave) {
+        const dig44 = mChave[0].replace(/\D/g, '');
+        if (dig44.length === 44) chCTe = dig44;
+      }
+      let nCT = '';
+      if (chCTe.length === 44) {
+        nCT = String(parseInt(chCTe.slice(25, 34), 10));
+      }
+
+      // 3. Data e Hora da Emissão (dhEmi)
+      let dhEmi = '';
+      const mDh = allText.match(/\b(\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?)\b/);
+      if (mDh) dhEmi = mDh[1];
+
+      // 4. Número Operacional do Conhecimento Aéreo (AWB Aéreo / nOCA / nMinu)
+      let awbAereo = '';
+      let nOCA = '';
+      let nMinu = '';
+      const mLatamAwb = allText.match(/\b(957\s*-\s*\d{8})\b/) || String(fileName || '').match(/\b(957\s*-\s*\d{8})\b/);
+      const mGolAwb = allText.match(/\b(127\s*-\s*\d{4}\s*\d{4}|127\d{8})\b/);
+
+      if (mLatamAwb) {
+        awbAereo = mLatamAwb[1].replace(/\s+/g, '');
+        nOCA = awbAereo.replace(/\D/g, '');
+      } else if (mGolAwb) {
+        nOCA = mGolAwb[1].replace(/\D/g, '');
+        awbAereo = nOCA;
+        if (nCT) nMinu = nCT;
+      } else if (nCT) {
+        awbAereo = nCT;
+        nOCA = nCT;
+      }
+
+      // Helper espacial: busca o valor posicionado imediatamente abaixo de um rótulo na página 1
+      const findBelowLabel = (labelSubstr, xTolLeft = 25, xTolRight = 115, yMin = 3, yMax = 25, regexFilter = null) => {
+        const lbls = p1Items.filter(it => it.norm.includes(labelSubstr));
+        for (const lbl of lbls) {
+          const cands = p1Items.filter(it =>
+            it.x >= (lbl.x - xTolLeft) &&
+            it.x <= (lbl.x + xTolRight) &&
+            (lbl.y - it.y) >= yMin &&
+            (lbl.y - it.y) <= yMax &&
+            it.norm !== lbl.norm
+          ).sort((a, b) => {
+            const dyA = lbl.y - a.y;
+            const dyB = lbl.y - b.y;
+            if (Math.abs(dyA - dyB) > 2) return dyA - dyB;
+            return a.x - b.x;
+          });
+          for (const c of cands) {
+            if (!regexFilter || regexFilter.test(c.str)) {
+              return c.str;
+            }
+          }
+        }
+        return '';
+      };
+
+      // 5. Peso Bruto, Peso Base de Cálculo (Taxado), Peso Aferido, Volumes, Valor da Carga e Frete
+      let pesoBruto = parseBrDecimalFromPdf(findBelowLabel('PESO BRUTO', 25, 110, 3, 24, /\d/));
+      let pesoTaxado = parseBrDecimalFromPdf(findBelowLabel('PESO BASE', 25, 115, 3, 24, /\d/));
+      let pesoAferido = parseBrDecimalFromPdf(findBelowLabel('PESO AFERIDO', 25, 110, 3, 24, /\d/));
+      const volStr = findBelowLabel('VOLUMES', 20, 95, 3, 24, /^\d{1,5}$/);
+      let vol = volStr ? parseInt(volStr, 10) : 0;
+      let vCarga = parseBrDecimalFromPdf(findBelowLabel('VALOR TOTAL DA CARGA', 25, 130, 3, 25, /\d/));
+      let vFrete = parseBrDecimalFromPdf(findBelowLabel('VALOR TOTAL DA PRESTACAO', 25, 150, 3, 25, /\d/));
+
+      if (pesoBruto <= 0) {
+        const mPb = allText.match(/Peso\s+Bruto\s*\(?Kg\)?\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i);
+        if (mPb) pesoBruto = parseBrDecimalFromPdf(mPb[1]);
+      }
+      if (pesoTaxado <= 0) {
+        pesoTaxado = pesoAferido > 0 ? pesoAferido : pesoBruto;
+      }
+      if (vol <= 0) {
+        const mVl = allText.match(/(?:QUANTIDADE\s+DE\s+VOLUMES|QTDE\.?\s*VOLUMES)\s*(?:\(UNID\.?\))?\s*(\d{1,5})/i);
+        if (mVl) vol = parseInt(mVl[1], 10) || 0;
+      }
+
+      // 6. Aeroporto de Origem, Aeroporto de Destino e Município de Destino (xMunFim)
+      let orig = findBelowLabel('AEROPORTO DE ORIGEM', 20, 135, 3, 25, /^[A-Z]{3}$/).toUpperCase();
+      let destIata = findBelowLabel('AEROPORTO DE DESTINO', 20, 135, 3, 25, /^[A-Z]{3}$/).toUpperCase();
+
+      if (!orig || !destIata) {
+        // Fallback espacial na faixa PREVISÃO DO FLUXO DA CARGA
+        const fluxoLbl = p1Items.find(it => it.norm.includes('PREVISAO DO FLUXO DA CARGA'));
+        if (fluxoLbl) {
+          const iataItems = p1Items.filter(it =>
+            (fluxoLbl.y - it.y) >= 10 &&
+            (fluxoLbl.y - it.y) <= 45 &&
+            /^[A-Z]{3}$/.test(it.str)
+          ).sort((a, b) => a.x - b.x);
+          if (!orig && iataItems.length >= 1) orig = iataItems[0].str.toUpperCase();
+          if (!destIata && iataItems.length >= 2) destIata = iataItems[iataItems.length - 1].str.toUpperCase();
+        }
+      }
+
+      let termPrest = findBelowLabel('TERMINO DA PRESTACAO', 20, 140, 3, 24);
+      let xMunFim = '';
+      if (termPrest) {
+        xMunFim = termPrest
+          .replace(/^[A-Z]{2}\s*-\s*/i, '')
+          .replace(/\s*-\s*[A-Z]{2}$/i, '')
+          .trim()
+          .toUpperCase();
+      }
+
+      // 7. Característica Adicional do Serviço (xCaracSer) e Outras Características (xOutCat)
+      const xCaracSer = findBelowLabel('CARACTERISTICA', 20, 140, 3, 24).toUpperCase();
+      const xOutCat = findBelowLabel('OUTRAS CARACTERISTICAS', 20, 140, 3, 24).toUpperCase();
+
+      // 8. Caixa espacial de OBSERVAÇÕES GERAIS (xObs)
+      let xObs = '';
+      const obsTopItem = p1Items.find(it => it.norm === 'OBSERVACOES GERAIS' || it.norm.startsWith('OBSERVACOES GERAIS'));
+      const obsBotItem = p1Items.find(it => it.norm.includes('INFORMACOES ESPECIFICAS DO MODAL'));
+      if (obsTopItem && obsBotItem && obsTopItem.y > obsBotItem.y) {
+        const obsItems = p1Items.filter(it =>
+          it.y < (obsTopItem.y - 2) &&
+          it.y > (obsBotItem.y + 2)
+        ).sort((a, b) => {
+          if (Math.abs(a.y - b.y) > 2.5) return b.y - a.y;
+          return a.x - b.x;
+        });
+        xObs = obsItems.map(i => i.str).join(' ').replace(/\s+/g, ' ').trim();
+      }
+      if (!xObs) {
+        const mObs = allText.match(/OBSERVA[CÇ][OÕ]ES\s+GERAIS\s*([\s\S]{1,600}?)(?:INFORMA[CÇ][OÕ]ES\s+ESPEC[IÍ]FICAS|$)/i);
+        if (mObs) xObs = mObs[1].replace(/\s+/g, ' ').trim();
+      }
+
+      // 9. Extrai Lacres de xObs com suporte a lacres concatenados sem espaço (ex: 032199032318032313 / 032319032316)
+      const lacres = extractSealsFromObsText(xObs);
+
+      // 10. Extrai todas as AWBs FedEx de 12 dígitos em DOCUMENTOS ORIGINÁRIOS (ex: "0/879.702.328.568") de todas as páginas
+      const docAntAwbs = [];
+      const docAwbRegex = /\b0\s*\/\s*(\d{3}[.\s]?\d{3}[.\s]?\d{3}[.\s]?\d{3})\b/g;
+      let mDoc;
+      while ((mDoc = docAwbRegex.exec(allText)) !== null) {
+        const awb12 = mDoc[1].replace(/\D/g, '');
+        if (awb12.length === 12 && !docAntAwbs.includes(awb12)) {
+          docAntAwbs.push(awb12);
+        }
+      }
+
+      const hasPeriTag = /\b(?:DGR|DRY\s*ICE|GELO\s*SECO|UN\s*\d{4}|CARGA\s*PERIGOSA|ARTIGO\s*PERIGOSO)\b/i.test(xObs + ' ' + xOutCat);
+
+      return {
+        fileName,
+        nCT,
+        dhEmi,
+        chCTe,
+        cia,
+        nOCA,
+        nMinu,
+        awbAereo,
+        orig,
+        destIata,
+        xMunFim,
+        vol,
+        peso: pesoBruto,
+        pesoBruto,
+        pesoTaxado,
+        xCaracSer,
+        xOutCat,
+        hasPeriTag,
+        vCarga,
+        vFrete,
+        xObs,
+        lacres,
+        nLacresXml: [],
+        docAntAwbs,
+        isFromPdf: true,
+        importedAt: new Date().toISOString()
+      };
+    }
+
     async function handleImportCteXmlFiles(event) {
       if (!ensureOperationOpenForMutation()) {
         if (event && event.target) event.target.value = '';
         return;
       }
-      const files = Array.from(event.target.files || []);
+      const rawFiles = Array.from(event.target.files || []);
       event.target.value = '';
-      if (files.length === 0) return;
+      if (rawFiles.length === 0) return;
 
       if (!state.ctes) state.ctes = {};
       let matchedCount = 0;
@@ -6096,11 +6418,35 @@
       const unmatchedFiles = [];
       const parsedItems = [];
 
-      for (const file of files) {
+      // Suporta arquivos .xml, .pdf (DACTE LATAM e GOL) e pacotes .zip contendo XMLs ou PDFs
+      for (const file of rawFiles) {
+        const fNameLower = String(file.name || '').toLowerCase();
         try {
-          const text = await file.text();
-          const cte = parseSingleCteXml(text, file.name);
-          parsedItems.push({ file, cte });
+          if (fNameLower.endsWith('.zip') && window.JSZip) {
+            const zipBuf = await file.arrayBuffer();
+            const zip = await window.JSZip.loadAsync(zipBuf);
+            const entries = Object.values(zip.files).filter(z => !z.dir);
+            for (const entry of entries) {
+              const eLower = String(entry.name || '').toLowerCase();
+              if (eLower.endsWith('.xml')) {
+                const xmlTxt = await entry.async('string');
+                const cte = parseSingleCteXml(xmlTxt, entry.name);
+                parsedItems.push({ file: { name: entry.name }, cte });
+              } else if (eLower.endsWith('.pdf')) {
+                const pdfBuf = await entry.async('arraybuffer');
+                const cte = await parseSingleCtePdf(pdfBuf, entry.name);
+                parsedItems.push({ file: { name: entry.name }, cte });
+              }
+            }
+          } else if (fNameLower.endsWith('.pdf') || file.type === 'application/pdf') {
+            const pdfBuf = await file.arrayBuffer();
+            const cte = await parseSingleCtePdf(pdfBuf, file.name);
+            parsedItems.push({ file, cte });
+          } else {
+            const text = await file.text();
+            const cte = parseSingleCteXml(text, file.name);
+            parsedItems.push({ file, cte });
+          }
         } catch (err) {
           console.error(err);
           unmatchedFiles.push(`${file.name} (Erro de leitura)`);
