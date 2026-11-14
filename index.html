@@ -4249,6 +4249,9 @@
       let totalVol = 0;
       let totalPeso = 0;
       let awbsAereasCount = 0;
+      let ltGruCount = 0;
+      let ltCghCount = 0;
+      let golCount = 0;
       for (const b of (state.blocks || [])) {
         const bVol = Number(b.vol || 0);
         const bPeso = Number(b.peso || 0);
@@ -4257,6 +4260,15 @@
         if ((b.cia === 'LATAM' || b.cia === 'GOL') && (bVol > 0 || bPeso > 0)) {
           if ((b.awbAereo && String(b.awbAereo).trim().length > 0) || b.aguardandoCteContingencia) {
             awbsAereasCount++;
+            const ciaUp = String(b.cia || '').toUpperCase();
+            const origUp = String(b.orig || '').toUpperCase();
+            if (ciaUp === 'GOL') {
+              golCount++;
+            } else if (origUp === 'CGH') {
+              ltCghCount++;
+            } else {
+              ltGruCount++;
+            }
           }
         }
       }
@@ -4282,7 +4294,12 @@
         lines.push(`🚫 *AWBs Recusadas:* ${recusadasCount}`);
       }
       if (awbsAereasCount > 0) {
-        lines.push(`✈️ *AWBs Aéreas:* ${awbsAereasCount}`);
+        const airSubParts = [];
+        if (ltGruCount > 0) airSubParts.push(`LT GRU ${ltGruCount}`);
+        if (ltCghCount > 0) airSubParts.push(`LT CGH ${ltCghCount}`);
+        if (golCount > 0) airSubParts.push(`GOL ${golCount}`);
+        const breakdownStr = airSubParts.length > 0 ? ` (${airSubParts.join(' / ')})` : '';
+        lines.push(`✈️ *AWBs Aéreas:* ${awbsAereasCount}${breakdownStr}`);
       }
       if (dgsCount > 0) {
         lines.push(`☣️ *DGs:* ${dgsCount}`);
