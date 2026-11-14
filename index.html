@@ -1143,6 +1143,7 @@
       recusas: [],
       dgs: [],
       foraDoVoo: [],
+      consForaDoVoo: [],
       blocks: [],
       report: [],
       ctes: {},
@@ -3233,6 +3234,7 @@
         dgs: [],
         pallets: {},
         foraDoVoo: [],
+        consForaDoVoo: [],
         blocks: initialBlocks,
         report: [],
         ctes: {},
@@ -3973,6 +3975,7 @@
       state.dgs = [];
       state.pallets = {};
       state.foraDoVoo = [];
+      state.consForaDoVoo = [];
       state.blocks = JSON.parse(JSON.stringify(FIXED_BLOCKS_TEMPLATE)).map(b => ({ ...b, awbAereo: '', vol: 0, peso: 0 }));
       applyMalhaRulesToBlocksArray(state.blocks, state.flightDate);
       state.report = [];
@@ -4025,6 +4028,7 @@
       state.dgs = [];
       state.pallets = {};
       state.foraDoVoo = [];
+      state.consForaDoVoo = [];
       state.movimentacoes = {};
       state.manualRowMeta = {};
       state.manualChronoLinks = [];
@@ -4245,10 +4249,35 @@
 
       if (cat === 'REC' || cat === 'FORA') {
         const list = cat === 'REC' ? (state.recusas || []) : (state.foraDoVoo || []);
-        title = cat === 'REC' ? `AWBs Recusadas (${list.length})` : `AWBs Fora do Voo (${list.length})`;
+        const ignoredConsList = cat === 'FORA' ? (state.consForaDoVoo || []) : [];
+        title = cat === 'REC'
+          ? `AWBs Recusadas (${list.length})`
+          : `Fora do Voo (${list.length} AWB${list.length === 1 ? '' : 's'}${ignoredConsList.length > 0 ? ` · ${ignoredConsList.length} CONS Ignorada${ignoredConsList.length === 1 ? '' : 's'}` : ''})`;
         countLabel = `${list.length} AWB(s)`;
-        if (list.length === 0) {
-          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhuma AWB em ${cat === 'REC' ? 'Recusas' : 'Fora do Voo'} nesta operação.</div>`;
+        const consIgnoredBanner = (cat === 'FORA' && ignoredConsList.length > 0) ? `
+          <div class="mb-3 p-3 rounded-xl bg-slate-100 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 space-y-2">
+            <div class="text-[11px] font-extrabold uppercase tracking-wider text-slate-600 dark:text-slate-300">✈️ CONS Ignoradas / Fora do Voo (${ignoredConsList.length})</div>
+            <div class="flex flex-wrap gap-1.5">
+              ${ignoredConsList.map(cNum => {
+                const cObj = consMap.get(String(cNum));
+                const meta = cObj ? `${cObj.dest} • ${cObj.source === 'DELIVERY' ? 'DELIVERY' : cObj.tipo}` : 'CONS';
+                return `
+                  <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-[11px] font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                    <span>${cNum}</span>
+                    <span class="px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px]">${meta}</span>
+                    <button type="button" onclick="setConsForaDoVoo('${cNum}', false); openKpiSpecialCategoryModal('FORA');" class="ml-1 px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-extrabold transition cursor-pointer">
+                      ↺ Reativar
+                    </button>
+                  </span>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        ` : '';
+        if (list.length === 0 && ignoredConsList.length === 0) {
+          rowsHtml = `<div class="py-8 text-center text-slate-400 text-xs">Nenhuma AWB ou CONS em ${cat === 'REC' ? 'Recusas' : 'Fora do Voo'} nesta operação.</div>`;
+        } else if (list.length === 0) {
+          rowsHtml = consIgnoredBanner + `<div class="py-4 text-center text-slate-400 text-xs">Nenhuma AWB individual fora do voo (apenas CONS ignorada acima).</div>`;
         } else {
           rowsHtml = `
             <div class="max-h-96 overflow-y-auto scrollbar-thin border border-slate-200 dark:border-slate-800 rounded-xl">
@@ -4293,6 +4322,9 @@
               </table>
             </div>
           `;
+          if (cat === 'FORA' && consIgnoredBanner) {
+            rowsHtml = consIgnoredBanner + rowsHtml;
+          }
         }
       } else if (cat === 'DELIVERY') {
         const delivConsList = (state.cons || []).filter(c => c.source === 'DELIVERY');
@@ -4548,17 +4580,30 @@
       const tbody = document.getElementById('listaConsTableBody');
       if (tbody) {
         tbody.innerHTML = state.cons.map(c => {
+          const isForaCons = isConsForaDoVoo(c.cons);
           const isCov = consSetInReport.has(c.cons);
           const seals = (state.lacres[c.cons] || []).join(' / ');
           const novo = state.novosLacres && state.novosLacres[c.cons] ? ` → <b class="text-orange-600 dark:text-orange-400">${state.novosLacres[c.cons]}</b>` : '';
           const isDeliv = c.source === 'DELIVERY';
           const originTag = isDeliv ? `<span class="text-[9px] font-mono text-amber-700 dark:text-amber-400 ml-1" title="Destino original VCPPC convertido via Description (${c.desc || c.dest})">← ${c.origDest || 'VCPPC'}</span>` : '';
           return `
-            <tr class="${isCov ? 'bg-emerald-50/70 dark:bg-emerald-950/20' : ''} hover:bg-purple-50/40 dark:hover:bg-slate-800/50">
-              <td class="py-2 px-4 font-mono font-bold text-slate-800 dark:text-slate-200">${c.cons}</td>
+            <tr class="${isForaCons ? 'bg-slate-200/60 dark:bg-slate-900/60 opacity-60' : (isCov ? 'bg-emerald-50/70 dark:bg-emerald-950/20' : '')} hover:bg-purple-50/40 dark:hover:bg-slate-800/50">
+              <td class="py-2 px-4 font-mono font-bold text-slate-800 dark:text-slate-200">
+                <div class="flex items-center gap-1.5">
+                  <span class="${isForaCons ? 'line-through text-slate-400' : ''}">${c.cons}</span>
+                  ${isForaCons ? '<span class="px-1.5 py-0.5 rounded bg-neutral-300 dark:bg-slate-700 text-neutral-800 dark:text-slate-200 text-[9px] font-extrabold">FORA DO VOO</span>' : ''}
+                </div>
+              </td>
               <td class="py-2 px-3 font-semibold">${c.dest}${originTag}</td>
               <td class="py-2 px-3"><span class="px-2 py-0.5 rounded-md text-[10px] font-bold ${isDeliv ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 border border-amber-300/60 dark:border-amber-700/60' : 'bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300'}">${isDeliv ? 'DELIVERY' : c.tipo}</span></td>
-              <td class="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-slate-400">${seals}${novo}</td>
+              <td class="py-2 px-3 font-mono text-[11px] text-slate-600 dark:text-slate-400">
+                <div class="flex items-center justify-between gap-2">
+                  <span>${seals}${novo}</span>
+                  <button type="button" onclick="setConsForaDoVoo('${c.cons}', ${!isForaCons})" class="px-1.5 py-0.5 rounded text-[9px] font-extrabold transition cursor-pointer ${isForaCons ? 'bg-emerald-600 hover:bg-emerald-500 text-white' : 'bg-slate-200 hover:bg-rose-600 hover:text-white dark:bg-slate-800 dark:hover:bg-rose-600 text-slate-600 dark:text-slate-300'}" title="${isForaCons ? 'Reativar esta CONS no voo' : 'Deixar esta CONS fora do voo / ignorar'}">
+                    ${isForaCons ? '↺ Reativar' : '✈️ Fora'}
+                  </button>
+                </div>
+              </td>
             </tr>
           `;
         }).join('');
@@ -4575,10 +4620,18 @@
         <button type="button" onclick="selectQuickAwb('${awb}')" class="px-2 py-0.5 rounded-md bg-red-600 hover:bg-red-700 text-white font-mono font-bold text-[11px] transition">${awb}</button>
       `).join('') || '<span class="text-[11px] text-slate-400">Nenhuma</span>';
 
-      document.getElementById('listForaCount').textContent = state.foraDoVoo.length;
-      document.getElementById('listForaPills').innerHTML = state.foraDoVoo.map(awb => `
+      const ignoredConsArr = Array.isArray(state.consForaDoVoo) ? state.consForaDoVoo : [];
+      document.getElementById('listForaCount').textContent = state.foraDoVoo.length + ignoredConsArr.length;
+      const foraAwbPills = state.foraDoVoo.map(awb => `
         <button type="button" onclick="selectQuickAwb('${awb}')" class="px-2 py-0.5 rounded-md bg-neutral-300 hover:bg-neutral-400 text-neutral-900 font-mono font-bold text-[11px] transition">${awb}</button>
-      `).join('') || '<span class="text-[11px] text-slate-400">Nenhuma</span>';
+      `);
+      const foraConsPills = ignoredConsArr.map(cNum => `
+        <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-700 text-white font-mono font-bold text-[11px]" title="CONS deixada Fora do Voo (clique em ↺ para reativar)">
+          <span>CONS ${cNum}</span>
+          <button type="button" onclick="setConsForaDoVoo('${cNum}', false)" class="ml-0.5 px-1 rounded bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-[9px] font-extrabold cursor-pointer" title="Reativar CONS ${cNum}">↺</button>
+        </span>
+      `);
+      document.getElementById('listForaPills').innerHTML = [...foraConsPills, ...foraAwbPills].join('') || '<span class="text-[11px] text-slate-400">Nenhuma</span>';
     }
 
     function selectQuickAwb(awb) {
@@ -5185,6 +5238,79 @@
       return totalInReport > 0 && activeRegularInBlock === 0;
     }
 
+    function isConsForaDoVoo(consStr) {
+      if (!consStr) return false;
+      const clean = String(consStr).trim();
+      return Array.isArray(state.consForaDoVoo) && state.consForaDoVoo.some(x => String(x || '').trim() === clean);
+    }
+
+    function setConsForaDoVoo(consStr, isFora = true) {
+      if (!ensureOperationOpenForMutation()) return;
+      const clean = String(consStr || '').trim();
+      if (!clean) return;
+      if (!Array.isArray(state.consForaDoVoo)) state.consForaDoVoo = [];
+      if (!Array.isArray(state.foraDoVoo)) state.foraDoVoo = [];
+
+      if (isFora) {
+        if (!state.consForaDoVoo.includes(clean)) {
+          state.consForaDoVoo.push(clean);
+        }
+        // Se houver AWBs dessa CONS no Report, move-as para Fora do Voo também
+        if (Array.isArray(state.report)) {
+          for (const r of state.report) {
+            if (String(r[1] || '').trim() === clean) {
+              const awb = String(r[0] || '').trim();
+              if (awb && !state.foraDoVoo.includes(awb)) {
+                state.foraDoVoo.push(awb);
+              }
+              const rIdx = state.recusas ? state.recusas.indexOf(awb) : -1;
+              if (rIdx >= 0) state.recusas.splice(rIdx, 1);
+            }
+          }
+        }
+        showToast(`✈️ CONS ${clean} marcada como Fora do Voo / Ignorada.`);
+      } else {
+        state.consForaDoVoo = state.consForaDoVoo.filter(x => String(x || '').trim() !== clean);
+        if (Array.isArray(state.report)) {
+          for (const r of state.report) {
+            if (String(r[1] || '').trim() === clean) {
+              const awb = String(r[0] || '').trim();
+              const fIdx = state.foraDoVoo.indexOf(awb);
+              if (fIdx >= 0) state.foraDoVoo.splice(fIdx, 1);
+            }
+          }
+        }
+        showToast(`↺ CONS ${clean} reativada na operação.`);
+      }
+
+      recalculateVolumesFromReport(false);
+      saveCatalogAndState();
+      renderAll();
+      if (typeof renderPendenciasReportTab === 'function' && activeTab === 'pendencias') {
+        renderPendenciasReportTab();
+      }
+    }
+
+    function ignorarTodasConsSemAwb() {
+      if (!ensureOperationOpenForMutation()) return;
+      const uncovered = getUncoveredConsList();
+      if (uncovered.length === 0) return;
+      if (!Array.isArray(state.consForaDoVoo)) state.consForaDoVoo = [];
+      for (const c of uncovered) {
+        const clean = String(c.cons || '').trim();
+        if (clean && !state.consForaDoVoo.includes(clean)) {
+          state.consForaDoVoo.push(clean);
+        }
+      }
+      recalculateVolumesFromReport(false);
+      saveCatalogAndState();
+      renderAll();
+      if (typeof renderPendenciasReportTab === 'function' && activeTab === 'pendencias') {
+        renderPendenciasReportTab();
+      }
+      showToast(`✈️ ${uncovered.length} CONS sem AWB marcada(s) como Fora do Voo!`);
+    }
+
     function getBlockConsAndSeals(blockId) {
       if (String(blockId).endsWith('|PALLET')) {
         const palletAwbs = state.report
@@ -5210,6 +5336,7 @@
       }
       const consItems = state.cons.filter(
         c => getCurrentBlockForCons(c) === blockId &&
+             !isConsForaDoVoo(c.cons) &&
              !isCons100PercentDg(c.cons) &&
              !isCons100PercentInactiveInBlock(c.cons, blockId)
       );
@@ -12169,7 +12296,7 @@
     function getUncoveredConsList() {
       if (!Array.isArray(state.cons) || state.cons.length === 0 || state.report.length === 0) return [];
       const coveredSet = new Set(state.report.map(r => String(r[1])));
-      return state.cons.filter(c => !coveredSet.has(c.cons));
+      return state.cons.filter(c => !coveredSet.has(c.cons) && !isConsForaDoVoo(c.cons));
     }
 
     function updatePendenciasBadgesAndBanners() {
@@ -12292,33 +12419,71 @@
         `;
       }
 
-      // 2. Painel de CONS sem nenhuma AWB no Report
+      // 2. Painel de CONS sem nenhuma AWB no Report + CONS deixadas Fora do Voo
       const uncovBox = document.getElementById('uncoveredConsAlertBox');
       if (uncovBox) {
-        if (uncoveredCons.length > 0) {
+        const ignoredConsList = Array.isArray(state.consForaDoVoo) ? state.consForaDoVoo : [];
+        if (uncoveredCons.length > 0 || ignoredConsList.length > 0) {
           const consNumbersTxt = uncoveredCons.map(c => c.cons).join('\r\n');
           uncovBox.classList.remove('hidden');
-          uncovBox.innerHTML = `
+          const uncovPanelHtml = uncoveredCons.length > 0 ? `
             <div class="p-3.5 rounded-xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-400 dark:border-amber-700 space-y-2">
               <div class="flex flex-wrap items-center justify-between gap-2">
                 <div>
                   <span class="font-extrabold text-xs text-amber-900 dark:text-amber-200">⚠️ Atenção: ${uncoveredCons.length} CONS da operação não possui(em) nenhuma AWB no Report importado!</span>
-                  <p class="text-[11px] text-amber-800 dark:text-amber-300">Isso pode significar que uma AWB veio com número de CONS errado (verifique "CONS INCORRETA" abaixo) ou que a CONS faltou na extração do DRE.</p>
+                  <p class="text-[11px] text-amber-800 dark:text-amber-300">Isso pode significar que uma AWB veio com número de CONS errado (verifique "CONS INCORRETA" abaixo), que a CONS faltou na extração do DRE ou que ela ficará fora do voo.</p>
                 </div>
-                <button type="button" onclick="copyTextFallback(\`${consNumbersTxt}\`, 'CONS sem cobertura copiadas!')" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0">
-                  📋 Copiar ${uncoveredCons.length} CONS Faltantes
-                </button>
+                <div class="flex flex-wrap items-center gap-2 shrink-0">
+                  ${uncoveredCons.length > 1 ? `
+                    <button type="button" onclick="ignorarTodasConsSemAwb()" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 dark:bg-slate-700 dark:hover:bg-rose-600 text-white font-bold text-xs transition cursor-pointer">
+                      ✈️ Deixar Todas Fora do Voo
+                    </button>
+                  ` : `
+                    <button type="button" onclick="setConsForaDoVoo('${uncoveredCons[0].cons}', true)" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-rose-600 dark:bg-slate-700 dark:hover:bg-rose-600 text-white font-bold text-xs transition cursor-pointer">
+                      ✈️ Ignorar / Deixar Fora do Voo
+                    </button>
+                  `}
+                  <button type="button" onclick="copyTextFallback(\`${consNumbersTxt}\`, 'CONS sem cobertura copiadas!')" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs shrink-0 cursor-pointer">
+                    📋 Copiar ${uncoveredCons.length} CONS Faltantes
+                  </button>
+                </div>
               </div>
               <div class="flex flex-wrap gap-1.5">
                 ${uncoveredCons.map(c => `
                   <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 font-mono text-[11px] font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                     <span>${c.cons}</span>
                     <span class="px-1.5 py-0.2 rounded bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 text-[10px]">${c.dest} • ${c.source === 'DELIVERY' ? 'DELIVERY' : c.tipo}</span>
+                    <button type="button" onclick="setConsForaDoVoo('${c.cons}', true)" class="ml-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-rose-600 dark:bg-slate-700 dark:hover:bg-rose-600 text-white text-[10px] font-extrabold transition cursor-pointer" title="Ignorar esta CONS e deixá-la Fora do Voo">
+                      ✈️ Fora do Voo
+                    </button>
                   </span>
                 `).join('')}
               </div>
             </div>
-          `;
+          ` : '';
+
+          const ignoredPanelHtml = ignoredConsList.length > 0 ? `
+            <div class="p-2.5 rounded-xl bg-slate-100/90 dark:bg-slate-800/60 border border-slate-300 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="text-[11px] font-extrabold text-slate-600 dark:text-slate-300">✈️ CONS Ignorada(s) / Fora do Voo (${ignoredConsList.length}):</span>
+                ${ignoredConsList.map(cNum => {
+                  const cObj = (state.cons || []).find(x => String(x.cons) === String(cNum));
+                  const meta = cObj ? `${cObj.dest} • ${cObj.source === 'DELIVERY' ? 'DELIVERY' : cObj.tipo}` : 'CONS';
+                  return `
+                    <span class="px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                      <span class="line-through text-slate-400">${cNum}</span>
+                      <span class="px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 text-[10px]">${meta}</span>
+                      <button type="button" onclick="setConsForaDoVoo('${cNum}', false)" class="ml-0.5 px-1.5 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[9px] font-extrabold transition cursor-pointer" title="Reativar esta CONS no voo">
+                        ↺ Reativar
+                      </button>
+                    </span>
+                  `;
+                }).join('')}
+              </div>
+            </div>
+          ` : '';
+
+          uncovBox.innerHTML = `<div class="space-y-2">${uncovPanelHtml}${ignoredPanelHtml}</div>`;
         } else {
           uncovBox.classList.add('hidden');
           uncovBox.innerHTML = '';
@@ -16339,7 +16504,7 @@ create policy "Acesso publico aereo_minutas_envios" on public.aereo_minutas_envi
       document.getElementById('lacreAvailableSection').classList.remove('hidden');
       document.getElementById('lacreNewInputSection').classList.add('hidden');
 
-      const matchingCons = state.cons.filter(c => c.dest === iata && ((state.lacres[c.cons] && state.lacres[c.cons].length > 0) || c.tipo === 'SACA'));
+      const matchingCons = state.cons.filter(c => c.dest === iata && !isConsForaDoVoo(c.cons) && ((state.lacres[c.cons] && state.lacres[c.cons].length > 0) || c.tipo === 'SACA'));
       const listEl = document.getElementById('lacreAvailableList');
       if (matchingCons.length === 0) {
         listEl.innerHTML = '<div class="p-2.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-500">Nenhum lacre de SACA disponível para esta IATA.</div>';
